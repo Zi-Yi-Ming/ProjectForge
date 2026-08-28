@@ -1,0 +1,42 @@
+{
+  "topic": "spring-projects/spring-boot",
+  "title_candidates": [
+    "spring-projects/spring-boot Explained",
+    "What is spring-projects/spring-boot?",
+    "spring-projects/spring-boot Overview"
+  ],
+  "summary": "Spring Boot helps you to create Spring-powered, production-grade applications and services with absolute minimum fuss.",
+  "key_points": [
+    "Language: Java",
+    "Stars: 81,371, Forks: 42,084",
+    "Topics: framework, java, spring, spring-boot"
+  ],
+  "technical_details": [
+    "Spring Boot uses GitHub's integrated issue tracking system to record bugs and feature requests.",
+    "We like to know the Spring Boot version, operating system, and JVM version you're using."
+  ],
+  "interesting_facts": [
+    "Spring Boot helps you to create Spring-powered, production-grade applications and services with absolute minimum fuss.",
+    "Provide a radically faster and widely accessible getting started experience for all Spring development."
+  ],
+  "installation": "",
+  "use_cases": [],
+  "sources": [
+    "https://github.com/spring-projects/spring-boot"
+  ],
+  "github": {
+    "stars": 81371,
+    "forks": 42084,
+    "language": "Java",
+    "description": "Spring Boot helps you to create Spring-powered, production-grade applications and services with absolute minimum fuss.",
+    "topics": [
+      "framework",
+      "java",
+      "spring",
+      "spring-boot"
+    ],
+    "license": "Apache License 2.0",
+    "html_url": "https://github.com/spring-projects/spring-boot",
+    "updated_at": ""
+  }
+}

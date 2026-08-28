@@ -1,0 +1,48 @@
+{
+  "title": "django/django",
+  "hook": "The Web framework for perfectionists with deadlines.",
+  "duration_target": 60,
+  "scenes": [
+    {
+      "id": 1,
+      "duration": 6,
+      "voiceover": "The Web framework for perfectionists with deadlines.",
+      "visual_prompt": "Python project concept illustration for Django: Web, framework, perfectionists, deadlines, clean modern infographic, dark theme",
+      "onscreen_text": "Django\nPython\napps, django, framework",
+      "transition": "fade"
+    },
+    {
+      "id": 2,
+      "duration": 6,
+      "voiceover": "With 89,028 stars and 34,200 forks, Django has clearly found strong adoption among Python developers.",
+      "visual_prompt": "GitHub repository dashboard for Django with star and fork metrics highlighted, dark UI",
+      "onscreen_text": "89,028 Stars\n34,200 Forks",
+      "transition": "fade"
+    },
+    {
+      "id": 3,
+      "duration": 6,
+      "voiceover": "A Python repository hosted on GitHub for developers.",
+      "visual_prompt": "Python architecture diagram showing Python, repository, hosted, GitHub, terminal/code editor aesthetic, dark theme",
+      "onscreen_text": "Tech: Python\nA Python repository hosted on GitHub for developers.",
+      "transition": "fade"
+    },
+    {
+      "id": 4,
+      "duration": 6,
+      "voiceover": "A Python repository with practical developer use cases.",
+      "visual_prompt": "workflow diagram for django/django, clean modern graphics, dark theme",
+      "onscreen_text": "Project Highlight\nPython Use Cases",
+      "transition": "fade"
+    },
+    {
+      "id": 5,
+      "duration": 6,
+      "voiceover": "Explore Django on GitHub today and read its documentation to understand how it works.",
+      "visual_prompt": "Django project summary card with GitHub icon and explore call-to-action, clean minimal design",
+      "onscreen_text": "Django\nExplore on GitHub",
+      "transition": "fade"
+    }
+  ],
+  "cta": "Explore django/django on GitHub"
+}

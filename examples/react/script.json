@@ -1,0 +1,48 @@
+{
+  "title": "react/react",
+  "hook": "The library for web and native user interfaces.",
+  "duration_target": 60,
+  "scenes": [
+    {
+      "id": 1,
+      "duration": 6,
+      "voiceover": "The library for web and native user interfaces.",
+      "visual_prompt": "JavaScript project concept illustration for React: library, web, native, user, clean modern infographic, dark theme",
+      "onscreen_text": "React\nJavaScript\ndeclarative, frontend, javascript",
+      "transition": "fade"
+    },
+    {
+      "id": 2,
+      "duration": 6,
+      "voiceover": "React has more than 247,989 stars on GitHub, which puts it among the most widely followed JavaScript projects.",
+      "visual_prompt": "GitHub repository dashboard for React with star and fork metrics highlighted, dark UI",
+      "onscreen_text": "247,989 Stars\n51,255 Forks",
+      "transition": "fade"
+    },
+    {
+      "id": 3,
+      "duration": 6,
+      "voiceover": "Declarative: React makes it painless to create interactive uis.",
+      "visual_prompt": "JavaScript architecture diagram showing Declarative, React, makes, painless, terminal/code editor aesthetic, dark theme",
+      "onscreen_text": "Tech: JavaScript\nDeclarative: React makes it painless to create interactive UIs.",
+      "transition": "fade"
+    },
+    {
+      "id": 4,
+      "duration": 6,
+      "voiceover": "A JavaScript repository with practical developer use cases.",
+      "visual_prompt": "workflow diagram for react/react, clean modern graphics, dark theme",
+      "onscreen_text": "Project Highlight\nJavaScript Use Cases",
+      "transition": "fade"
+    },
+    {
+      "id": 5,
+      "duration": 6,
+      "voiceover": "Check out React on GitHub to learn more about its Declarative, React, makes, painless.",
+      "visual_prompt": "React project summary card with GitHub icon and explore call-to-action, clean minimal design",
+      "onscreen_text": "React\nExplore on GitHub",
+      "transition": "fade"
+    }
+  ],
+  "cta": "Explore react/react on GitHub"
+}

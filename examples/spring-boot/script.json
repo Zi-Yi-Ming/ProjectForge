@@ -1,0 +1,48 @@
+{
+  "title": "spring-projects/spring-boot",
+  "hook": "Spring Boot helps you to create Spring-powered, production-grade applications and services with absolute minimum fuss.",
+  "duration_target": 60,
+  "scenes": [
+    {
+      "id": 1,
+      "duration": 6,
+      "voiceover": "Spring Boot helps you to create Spring-powered, production-grade applications and services with absolute minimum fuss.",
+      "visual_prompt": "Java project concept illustration for Spring Boot: Spring, Boot, helps, you, clean modern infographic, dark theme",
+      "onscreen_text": "Spring Boot\nJava\nframework, java, spring",
+      "transition": "fade"
+    },
+    {
+      "id": 2,
+      "duration": 6,
+      "voiceover": "With 81,371 stars and 42,084 forks, Spring Boot has clearly found strong adoption among Java developers.",
+      "visual_prompt": "GitHub repository dashboard for Spring Boot with star and fork metrics highlighted, dark UI",
+      "onscreen_text": "81,371 Stars\n42,084 Forks",
+      "transition": "fade"
+    },
+    {
+      "id": 3,
+      "duration": 6,
+      "voiceover": "Spring Boot uses GitHub's integrated issue tracking system to record bugs and feature requests.",
+      "visual_prompt": "Java architecture diagram showing Spring, Boot, uses, GitHub, terminal/code editor aesthetic, dark theme",
+      "onscreen_text": "Tech: Java\n",
+      "transition": "fade"
+    },
+    {
+      "id": 4,
+      "duration": 6,
+      "voiceover": "A Java repository with practical developer use cases.",
+      "visual_prompt": "workflow diagram for spring-projects/spring-boot, clean modern graphics, dark theme",
+      "onscreen_text": "Project Highlight\nJava Use Cases",
+      "transition": "fade"
+    },
+    {
+      "id": 5,
+      "duration": 6,
+      "voiceover": "Check out Spring Boot on GitHub to learn more about its Spring, Boot, uses, GitHub.",
+      "visual_prompt": "Spring Boot project summary card with GitHub icon and explore call-to-action, clean minimal design",
+      "onscreen_text": "Spring Boot\nExplore on GitHub",
+      "transition": "fade"
+    }
+  ],
+  "cta": "Explore spring-projects/spring-boot on GitHub"
+}

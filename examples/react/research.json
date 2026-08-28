@@ -1,0 +1,40 @@
+{
+  "topic": "react/react",
+  "title_candidates": [
+    "react/react Explained",
+    "What is react/react?",
+    "react/react Overview"
+  ],
+  "summary": "The library for web and native user interfaces.",
+  "key_points": [
+    "Language: JavaScript",
+    "Stars: 247,989, Forks: 51,255",
+    "Topics: declarative, frontend, javascript, library, react"
+  ],
+  "technical_details": [
+    "Declarative: React makes it painless to create interactive UIs. Design simple views for each state in your application, and React will efficiently update and render just the right components when your data changes."
+  ],
+  "interesting_facts": [],
+  "installation": "",
+  "use_cases": [],
+  "sources": [
+    "https://github.com/react/react"
+  ],
+  "github": {
+    "stars": 247989,
+    "forks": 51255,
+    "language": "JavaScript",
+    "description": "The library for web and native user interfaces.",
+    "topics": [
+      "declarative",
+      "frontend",
+      "javascript",
+      "library",
+      "react",
+      "ui"
+    ],
+    "license": "MIT License",
+    "html_url": "https://github.com/react/react",
+    "updated_at": ""
+  }
+}

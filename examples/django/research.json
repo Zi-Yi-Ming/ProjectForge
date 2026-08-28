@@ -1,0 +1,41 @@
+{
+  "topic": "django/django",
+  "title_candidates": [
+    "django/django Explained",
+    "What is django/django?",
+    "django/django Overview"
+  ],
+  "summary": "The Web framework for perfectionists with deadlines.",
+  "key_points": [
+    "Language: Python",
+    "Stars: 89,028, Forks: 34,200",
+    "Topics: apps, django, framework, models, orm"
+  ],
+  "technical_details": [],
+  "interesting_facts": [],
+  "installation": "",
+  "use_cases": [],
+  "sources": [
+    "https://github.com/django/django"
+  ],
+  "github": {
+    "stars": 89028,
+    "forks": 34200,
+    "language": "Python",
+    "description": "The Web framework for perfectionists with deadlines.",
+    "topics": [
+      "apps",
+      "django",
+      "framework",
+      "models",
+      "orm",
+      "python",
+      "templates",
+      "views",
+      "web"
+    ],
+    "license": "BSD 3-Clause \"New\" or \"Revised\" License",
+    "html_url": "https://github.com/django/django",
+    "updated_at": ""
+  }
+}
