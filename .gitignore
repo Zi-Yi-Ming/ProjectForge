@@ -1,0 +1,8 @@
+.venv/
+.env
+tasks/
+cache/
+logs/
+outputs/
+__pycache__/
+*.pyc
