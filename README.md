@@ -1,62 +1,128 @@
 # Content Agent
 
-Production-style automation workflow for researching GitHub repositories and producing short-form faceless video assets.
+Turn a GitHub repository into a short vertical video (1080x1920, ~30s) with research, script, voiceover, subtitles, and rendered output.
 
-## Verified Connectivity (Phase 1)
+## What it does
 
-- StepFun API endpoint reachable from this VM.
-- GitHub API endpoint reachable from this VM.
-- Default Step Plan base URL: https://api.stepfun.com/step_plan/v1
+Content Agent reads a GitHub repo, extracts repo-specific facts, generates a 5-scene script, produces voiceover and subtitles, and renders a short vertical video. It is an AI content generation pipeline for faceless tech-channel style videos.
 
-## Verified Model Mapping (Phase 2 Design)
+## Pipeline
 
-| Role | Default Model | Notes |
-| --- | --- | --- |
-| Fast | step-3.7-flash | lightweight tasks |
-| Agent | step-explore | long-form research and scripting |
-| Reasoning | step-explore | complex planning tasks |
-| Vision | step-1o-turbo-vision | visual QA |
-| Image | step-image-edit-2 | AI image generation fallback |
-| TTS | stepaudio-2.5-tts | speech synthesis |
-| Router | step-router-v1 | optional router mode |
+```
+GitHub Repository
+       ↓
+   Research
+       ↓
+Fact Cleaning / Validation
+       ↓
+  Script Generation
+       ↓
+Visual / Voice / Subtitle
+       ↓
+  FFmpeg Rendering
+       ↓
+1080x1920 Short Video
+```
 
-All model IDs are configurable via environment variables and should be treated as replaceable provider inputs.
-
-## Current MVP Scope
-
-- Input: GitHub URL or topic string
-- Output: research.json, script.json, assets, audio, subtitles, render state
-- Runtime: Python 3.12 venv, StepFun API, GitHub API, FFmpeg
-- No Node.js, Chromium, or Docker required for Phase 2
-
-## Setup
+## Quick Start
 
 ```bash
 cp .env.example .env
-```
+# edit .env and set STEPFUN_API_KEY and optional GITHUB_TOKEN
 
-Edit `.env` and set at least:
-
-- STEPFUN_API_KEY
-- GITHUB_TOKEN (optional but recommended)
-
-## CLI
-
-```bash
 source .venv/bin/activate
-python main.py --check-only
-python main.py --dry-run --input "<github_url_or_topic>"
-python main.py --input "<github_url_or_topic>"
-python main.py --stage script --input "<github_url_or_topic>"
-python main.py --resume --input "<github_url_or_topic>"
-python main.py --reset --input "<github_url_or_topic>"
+python main.py --input "https://github.com/django/django"
 ```
 
-## Task Data
+Outputs are written under `tasks/<task_id>/` and `outputs/<task_id>/`.
 
-- tasks/<task_id>/
-- cache/
-- logs/
-- outputs/
+## Configuration
 
-Do not commit these directories. They are gitignored by default.
+Environment variables are loaded from `.env`.
+
+| Variable | Purpose |
+| --- | --- |
+| `STEPFUN_API_KEY` | StepFun API key for LLM / image / TTS |
+| `GITHUB_TOKEN` | GitHub token for higher API rate limits |
+| `STEPFUN_BASE_URL` | StepFun API base URL |
+| `STEPFUN_MODEL_FAST` | Fast model ID |
+| `STEPFUN_MODEL_AGENT` | Research / script model ID |
+| `STEPFUN_MODEL_REASONING` | Reasoning model ID |
+| `STEPFUN_MODEL_VISION` | Vision model ID |
+| `STEPFUN_MODEL_IMAGE` | Image generation model ID |
+| `STEPFUN_MODEL_TTS` | TTS model ID |
+| `STEPFUN_TTS_VOICE` | TTS voice |
+| `STEPFUN_TTS_RESPONSE_FORMAT` | TTS audio format |
+| `STEPFUN_TIMEOUT` | Request timeout |
+| `STEPFUN_MAX_RETRIES` | Retry count |
+| `LOG_LEVEL` | Logging level |
+
+## Architecture
+
+```
+app/
+  agents/
+    researcher.py   # GitHub README / repo metadata → research.json
+    writer.py       # research.json → script.json (5 scenes)
+    visual.py       # scene prompts → images
+    voice.py        # scene voiceover → audio
+    subtitle.py     # voiceover + timing → subtitles
+  pipeline/
+    state.py        # task state machine
+    workflow.py     # orchestrates agents and render
+  providers/
+    github.py       # GitHub API client
+    step.py         # StepFun API client
+    cache.py        # disk-backed cache
+    edge_tts.py     # fallback TTS provider
+  render/
+    ffmpeg.py       # image + audio + subtitle → final.mp4
+  schemas/
+    research.py     # ResearchOutput model
+    script.py       # ScriptOutput model
+  config.py         # settings loaded from .env
+```
+
+## Example Output
+
+A successful run produces:
+
+- `tasks/<task_id>/research.json`
+- `tasks/<task_id>/script.json`
+- `tasks/<task_id>/video/final.mp4`
+
+Example script structure:
+
+```json
+{
+  "title": "django/django",
+  "scenes": [
+    {
+      "id": 1,
+      "voiceover": "The Web framework for perfectionists with deadlines.",
+      "onscreen_text": "Django\\nPython\\napps, django, framework"
+    }
+  ]
+}
+```
+
+## Quality / Validation
+
+The writer and researcher have been validated against fresh end-to-end runs for:
+
+- `django/django`
+- `facebook/react`
+- `spring-projects/spring-boot`
+
+Validation includes:
+
+- research cleaning: no README原文污染, markdown, URL, path, heading, polite phrase, fragment, trailing colon
+- script quality: exactly 5 scenes, non-mechanical hook, proper noun casing, repo-specific facts
+- cross-scene checks: Scene 3/4 dedup, Scene 5 not copying earlier scenes
+- voiceover / onscreen consistency
+- `ffprobe` verification: h264, 1080x1920, 30fps, AAC, duration > 0
+
+## Notes
+
+- `tasks/`, `cache/`, `logs/`, `outputs/`, and `.venv/` are gitignored.
+- This is an actively iterating project; APIs and prompts may change.
