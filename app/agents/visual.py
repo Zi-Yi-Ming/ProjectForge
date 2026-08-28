@@ -48,8 +48,10 @@ class VisualAgent:
             cached = cache_get("visual", cache_key)
             is_placeholder = False
             if cached and cached.get("path"):
-                asset_path = Path(cached["path"])
-                if not asset_path.exists():
+                cached_path = Path(cached["path"])
+                if cached_path.exists() and cached_path.parent == assets_dir:
+                    asset_path = cached_path
+                else:
                     asset_path, is_placeholder = self._generate(task_id, scene, prompt, asset_path)
             else:
                 asset_path, is_placeholder = self._generate(task_id, scene, prompt, asset_path)
@@ -62,7 +64,10 @@ class VisualAgent:
     def _generate(self, task_id: str, scene, prompt: str, asset_path: Path) -> tuple[Path, bool]:
         if self.image_provider:
             try:
-                return self.image_provider.image(settings.step.model_image, prompt), False
+                generated_path = self.image_provider.image(settings.step.model_image, prompt)
+                asset_path.parent.mkdir(parents=True, exist_ok=True)
+                asset_path.write_bytes(generated_path.read_bytes())
+                return asset_path, False
             except Exception as exc:
                 logger.warning("image provider failed task_id=%s scene=%s error=%s", task_id, scene.id, exc)
         return _create_placeholder_png(asset_path), True
