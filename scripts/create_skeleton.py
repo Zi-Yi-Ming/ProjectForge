@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-ROOT = Path('/home/azureuser/content-agent')
+ROOT = Path(__file__).resolve().parent.parent
 for p in [
     ROOT / 'app' / 'schemas',
     ROOT / 'app' / 'providers',

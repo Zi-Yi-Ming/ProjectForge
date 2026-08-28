@@ -32,7 +32,6 @@ All model IDs are configurable via environment variables and should be treated a
 ## Setup
 
 ```bash
-cd /home/azureuser/content-agent
 cp .env.example .env
 ```
 
