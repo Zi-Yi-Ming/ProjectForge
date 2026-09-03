@@ -19,6 +19,12 @@ from app.schemas.event import Actor, ProductEvent
 from app.schemas.project import Project, ProjectStatus
 from app.schemas.task import TaskGraph
 
+_ARTIFACT_REF_FIELDS = {
+    "jd_profile": "jd_profile_ref",
+    "blueprint": "blueprint_ref",
+    "task_graph": "task_graph_ref",
+}
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -121,3 +127,12 @@ class ProjectService:
             )
         )
         return run
+
+    def update_artifact_ref(self, project_id: str, artifact_kind: str, artifact_ref: str) -> Project:
+        if artifact_kind not in _ARTIFACT_REF_FIELDS:
+            raise ValueError(f"Unsupported artifact kind: {artifact_kind}")
+        project = self.load(project_id)
+        setattr(project, _ARTIFACT_REF_FIELDS[artifact_kind], artifact_ref)
+        project.updated_at = _now_iso()
+        self.persistence.save_project(project)
+        return project
