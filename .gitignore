@@ -1,8 +1,11 @@
 .venv/
 .env
+.env.*
+__pycache__/
+*.pyc
+.pytest_cache/
+.runtime/
 tasks/
 cache/
 logs/
 outputs/
-__pycache__/
-*.pyc
