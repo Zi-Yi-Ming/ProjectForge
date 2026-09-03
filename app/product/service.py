@@ -15,9 +15,13 @@ from app.product.lifecycle import ProjectLifecycle
 from app.product.project_persistence import ProjectPersistence
 from app.product.run_control import RunControl
 from app.product.replan_control import ReplanControl
+from app.product.workflow import ProjectWorkflow
 from app.schemas.event import Actor, ProductEvent
 from app.schemas.project import Project, ProjectStatus
+from app.schemas.scoring import RepositoryScore
 from app.schemas.task import TaskGraph
+from app.schemas.research import ResearchOutput
+from app.schemas.blueprint import UserProfile
 
 _ARTIFACT_REF_FIELDS = {
     "jd_profile": "jd_profile_ref",
@@ -136,3 +140,40 @@ class ProjectService:
         project.updated_at = _now_iso()
         self.persistence.save_project(project)
         return project
+
+    def run_workflow_to_ready(
+        self,
+        project_id: str,
+        jd_text: str,
+        research_output: ResearchOutput,
+        repository_score: RepositoryScore,
+        user_profile: UserProfile,
+        workflow: ProjectWorkflow | None = None,
+    ) -> Project:
+        project = self.load(project_id)
+        if project.status != ProjectStatus.CREATED:
+            raise InvalidProjectStateError(
+                f"Project {project_id} is not CREATED; cannot run setup workflow from {project.status}."
+            )
+
+        workflow = workflow or ProjectWorkflow()
+
+        self.transition_to(project_id, ProjectStatus.ANALYZING)
+        jd_profile = workflow.analyze_jd(jd_text)
+        jd_ref = workflow.persist_jd_profile(project_id, jd_profile)
+        self.update_artifact_ref(project_id, "jd_profile", jd_ref)
+
+        self.transition_to(project_id, ProjectStatus.PLANNING)
+        project_fit = workflow.build_match(jd_profile, research_output, repository_score)
+        blueprint = workflow.build_blueprint(jd_profile, research_output, project_fit, repository_score, user_profile)
+        task_graph = workflow.build_task_graph(blueprint)
+
+        workflow.persist_project_fit(project_id, project_fit)
+        bp_ref = workflow.persist_blueprint(project_id, blueprint)
+        tg_ref = workflow.persist_task_graph(project_id, task_graph)
+
+        self.update_artifact_ref(project_id, "blueprint", bp_ref)
+        self.update_artifact_ref(project_id, "task_graph", tg_ref)
+
+        self.transition_to(project_id, ProjectStatus.READY)
+        return self.load(project_id)
