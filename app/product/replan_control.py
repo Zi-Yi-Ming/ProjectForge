@@ -223,12 +223,14 @@ class ReplanControl:
         for record in run.task_results:
             if record.task_id == task_id and record.execution_result is not None:
                 return record.execution_result
-        from app.schemas.implementation import AgentExecutionResult, ExecutionStatus as AgentExecutionStatus, ScopeStatus
-        return AgentExecutionResult(task_id=task_id, agent="unknown", status=AgentExecutionStatus.FAILED, scope_status=ScopeStatus.WITHIN_SCOPE, summary="", errors=[], blocking_reason="", started_at="", finished_at="")
+        raise InvalidProjectStateError(
+            f"Missing execution result for task {task_id} in run {run.run_id}."
+        )
 
     def _validation_result(self, run: ExecutionRun, task_id: str) -> Any:
         for record in run.task_results:
             if record.task_id == task_id and record.validation_result is not None:
                 return record.validation_result
-        from app.schemas.validation import ValidationResult, ValidationStatus
-        return ValidationResult(task_id=task_id, status=ValidationStatus.FAIL, criterion_results=[], test_results=[], scope_result="WITHIN_SCOPE", changed_files=[], evidence=[], failures=[], warnings=[], manual_review_items=[], llm_review=None, repair_cycle=0, validated_at="")
+        raise InvalidProjectStateError(
+            f"Missing validation result for task {task_id} in run {run.run_id}."
+        )

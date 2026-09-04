@@ -223,7 +223,9 @@ class ProjectService:
             raise InvalidProjectStateError(f"Proposal {proposal_id} was not applied.")
 
         tg_ref = (workflow or ProjectWorkflow()).persist_task_graph(project_id, task_graph)
-        self.update_artifact_ref(project_id, "task_graph", tg_ref)
+        project.task_graph_ref = tg_ref
+        project.updated_at = _now_iso()
+        self.persistence.save_project(project)
         return proposal
 
     def resume_project(
@@ -268,6 +270,7 @@ class ProjectService:
         if task_graph is None:
             raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
 
+        project = self.transition_to(project_id, ProjectStatus.EXECUTING)
         resolved_run_dir = Path(run_dir) if run_dir is not None else None
         try:
             from app.agents.hermes_adapter import HermesAdapter
@@ -277,7 +280,44 @@ class ProjectService:
         except Exception as exc:
             raise InvalidProjectStateError(f"Failed to initialize executor: {exc}") from exc
 
-        return self.execute_ready_project(project_id, run_dir=resolved_run_dir, adapter=executor, workflow=workflow)
+        try:
+            run = self.run_control.start_run(project, task_graph=task_graph, run_dir=resolved_run_dir, executor=executor)
+        except Exception:
+            failed_run_id = self.run_control._active_runs.get(project_id)
+            self.run_control._active_runs.pop(project_id, None)
+            self._active_runs.pop(project_id, None)
+            if failed_run_id:
+                project.last_run_id = failed_run_id
+                project.updated_at = _now_iso()
+                self.persistence.save_project(project)
+                try:
+                    self.transition_to(project_id, ProjectStatus.FAILED)
+                except InvalidStateTransitionError:
+                    pass
+            raise
+        self._active_runs[project_id] = run.run_id
+        project.last_run_id = run.run_id
+        project.updated_at = _now_iso()
+        self.persistence.save_project(project)
+        self.event_store.append(
+            ProductEvent(
+                event_id=_new_event_id(),
+                event_type="RUN_CREATED",
+                project_id=project_id,
+                timestamp=_now_iso(),
+                actor=Actor.SYSTEM,
+                payload={"run_id": run.run_id},
+            )
+        )
+        completed = self.run_control.complete_run(project_id, run.run_id, run.status)
+        self._active_runs.pop(project_id, None)
+        if completed.status == ExecutionStatus.COMPLETED:
+            self.transition_to(project_id, ProjectStatus.COMPLETED)
+        elif completed.status == ExecutionStatus.FAILED:
+            self.transition_to(project_id, ProjectStatus.FAILED)
+        else:
+            self.transition_to(project_id, ProjectStatus.BLOCKED)
+        return self.load(project_id)
 
     def execute_ready_project(
         self,
@@ -302,7 +342,21 @@ class ProjectService:
             executor = adapter
         else:
             executor = ExecutionOrchestrator(adapter=adapter)
-        run = self.run_control.start_run(project, task_graph=task_graph, run_dir=resolved_run_dir, executor=executor)
+        try:
+            run = self.run_control.start_run(project, task_graph=task_graph, run_dir=resolved_run_dir, executor=executor)
+        except Exception:
+            failed_run_id = self.run_control._active_runs.get(project_id)
+            self.run_control._active_runs.pop(project_id, None)
+            self._active_runs.pop(project_id, None)
+            if failed_run_id:
+                project.last_run_id = failed_run_id
+                project.updated_at = _now_iso()
+                self.persistence.save_project(project)
+                try:
+                    self.transition_to(project_id, ProjectStatus.FAILED)
+                except InvalidStateTransitionError:
+                    pass
+            raise
         self._active_runs[project_id] = run.run_id
         project.last_run_id = run.run_id
         project.updated_at = _now_iso()

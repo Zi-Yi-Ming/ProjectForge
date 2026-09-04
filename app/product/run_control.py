@@ -112,28 +112,35 @@ class RunControl:
                             self._event("RUN_FAILED", project_id, run_id)
                         elif run.status == ExecutionStatus.BLOCKED:
                             self._event("RUN_BLOCKED", project_id, run_id)
-                except Exception:
-                    # Do not fail run creation because execution engine raised.
-                    pass
+                except Exception as exc:
+                    run.status = ExecutionStatus.FAILED
+                    run.finished_at = self._now()
+                    run.failed_tasks = [run.current_task_id] if run.current_task_id else []
+                    run.blocking_reason = str(exc)
+                    self.execution_persistence.create_run(run)
+                    self._event("RUN_FAILED", project_id, run_id, {"blocking_reason": str(exc)})
+                    raise
 
             return run
 
     def complete_run(self, project_id: str, run_id: str, status: ExecutionStatus = ExecutionStatus.COMPLETED) -> ExecutionRun:
         run = self.execution_persistence.load_run(run_id)
-        run.status = status
-        run.finished_at = self._now()
-        self.execution_persistence.create_run(run)
+        was_terminal = run.status in {ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.BLOCKED}
+        if run.status != status:
+            run.status = status
+            run.finished_at = self._now()
+            self.execution_persistence.create_run(run)
         if project_id in self._active_runs and self._active_runs[project_id] == run_id:
             self._active_runs.pop(project_id, None)
-        if status == ExecutionStatus.COMPLETED:
+        if status == ExecutionStatus.COMPLETED and not was_terminal:
             self._event("RUN_COMPLETED", project_id, run_id)
             if self._on_run_completed is not None:
                 self._on_run_completed(run)
-        elif status == ExecutionStatus.FAILED:
+        elif status == ExecutionStatus.FAILED and not was_terminal:
             self._event("RUN_FAILED", project_id, run_id)
             if self._on_run_failed is not None:
                 self._on_run_failed(run)
-        elif status == ExecutionStatus.BLOCKED:
+        elif status == ExecutionStatus.BLOCKED and not was_terminal:
             self._event("RUN_BLOCKED", project_id, run_id)
         return run
 
