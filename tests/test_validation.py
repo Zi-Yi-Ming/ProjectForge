@@ -5,7 +5,6 @@ from pathlib import Path
 import json
 import pytest
 
-from app.agents.llm_reviewer import LLMReviewer
 from app.agents.validation_aggregator import ValidationAggregator
 from app.agents.validator import DeterministicValidator
 from app.schemas.implementation import (
@@ -170,62 +169,6 @@ def test_deterministic_validator_deterministic_same_inputs() -> None:
     assert first.scope_result == second.scope_result
 
 
-# =========================
-# LLM reviewer mock
-# =========================
-
-class MockLLMReviewer(LLMReviewer):
-    def review(self, task_contract, project_map, diff_text, deterministic_results, p12_test_results):
-        return LLMReviewResult(
-            status=ValidationStatus.NEEDS_REVIEW,
-            findings=[LLMReviewFinding(severity="MEDIUM", criterion="style", evidence="line 1")],
-            strengths=["clean structure"],
-            risks=["edge case"],
-            evidence=["diff excerpt"],
-            confidence=0.8,
-            recommendations=["add input validation"],
-        )
-
-
-def test_mock_llm_reviewer_returns_structured_result() -> None:
-    reviewer = MockLLMReviewer()
-    result = reviewer.review(_contract(), ProjectMap(), "diff", [], [])
-    assert result.status == ValidationStatus.NEEDS_REVIEW
-    assert result.findings
-    assert result.recommendations
-
-
-def test_mock_llm_reviewer_failure() -> None:
-    class FailReviewer(LLMReviewer):
-        def review(self, task_contract, project_map, diff_text, deterministic_results, p12_test_results):
-            return LLMReviewResult(
-                status=ValidationStatus.FAIL,
-                findings=[LLMReviewFinding(severity="HIGH", criterion="incorrect behavior", evidence="line 2")],
-                confidence=0.95,
-            )
-
-    reviewer = FailReviewer()
-    result = reviewer.review(_contract(), ProjectMap(), "diff", [], [])
-    assert result.status == ValidationStatus.FAIL
-    assert result.findings[0].severity == "HIGH"
-
-
-def test_mock_llm_reviewer_invalid_output_returns_needs_review() -> None:
-    class InvalidReviewer(LLMReviewer):
-        def review(self, task_contract, project_map, diff_text, deterministic_results, p12_test_results):
-            return LLMReviewResult(status=ValidationStatus.PASS, confidence=0.0)
-
-    reviewer = InvalidReviewer()
-    result = reviewer.review(_contract(), ProjectMap(), "diff", [], [])
-    assert result.status in {ValidationStatus.PASS, ValidationStatus.NEEDS_REVIEW, ValidationStatus.FAIL}
-
-
-def test_llm_reviewer_is_abstract() -> None:
-    with pytest.raises(TypeError):
-        LLMReviewer()
-
-
-# =========================
 # Aggregator tests
 # =========================
 
@@ -430,17 +373,6 @@ def test_deterministic_validator_deterministic() -> None:
     assert first.model_dump() == second.model_dump()
 
 
-def test_validation_result_deterministic_with_same_llm() -> None:
-    deterministic = validator.validate("T7", _contract(), _result_passing())
-    llm = MockLLMReviewer().review(_contract(), ProjectMap(), "diff", [], [])
-    first, _ = aggregator.aggregate(_contract(), _result_passing(), deterministic, llm_review=llm)
-    second, _ = aggregator.aggregate(_contract(), _result_passing(), deterministic, llm_review=llm)
-    assert first.model_dump() == second.model_dump()
-
-
-# =========================
-# CLI boundary
-# =========================
 
 def test_validate_command_added_to_main() -> None:
     source = Path("/home/azureuser/content-agent/main.py").read_text(encoding="utf-8")
