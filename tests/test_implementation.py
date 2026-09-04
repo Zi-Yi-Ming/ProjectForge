@@ -458,7 +458,7 @@ def test_hermes_adapter_returns_structured_result() -> None:
 
 
 def test_p12_does_not_hardcode_hermes_business_logic() -> None:
-    source = Path("/home/azureuser/content-agent/app/agents/hermes_adapter.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "app" / "agents" / "hermes_adapter.py").read_text(encoding="utf-8")
     assert "if agent == \"hermes\"" not in source
 
 
@@ -820,12 +820,12 @@ def test_p12_does_not_mark_task_done() -> None:
 # =========================
 
 def test_p12_does_not_call_github_provider() -> None:
-    source = Path("/home/azureuser/content-agent/app/agents/hermes_adapter.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "app" / "agents" / "hermes_adapter.py").read_text(encoding="utf-8")
     assert "github" not in source.lower() or "from app.providers.github" not in source
 
 
 def test_p12_does_not_reuse_research_matcher_scoring_jd() -> None:
-    source = Path("/home/azureuser/content-agent/app/agents/hermes_adapter.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "app" / "agents" / "hermes_adapter.py").read_text(encoding="utf-8")
     assert "ProjectMatcher" not in source
     assert "RepositoryScorer" not in source
     assert "JDAnalyzer" not in source
@@ -912,12 +912,12 @@ def test_project_map_deterministic_from_same_blueprint() -> None:
 
 def test_completed_task_is_not_auto_modified() -> None:
     # P12 does not own TaskGraph state; boundary is enforced by not exposing TaskGraph mutation here.
-    source = Path("/home/azureuser/content-agent/app/agents/hermes_adapter.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "app" / "agents" / "hermes_adapter.py").read_text(encoding="utf-8")
     assert "TaskStatus.DONE" not in source
 
 
 def test_blueprint_is_not_auto_modified() -> None:
-    source = Path("/home/azureuser/content-agent/app/agents/hermes_adapter.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "app" / "agents" / "hermes_adapter.py").read_text(encoding="utf-8")
     assert "ProjectBlueprint(" not in source
 
 

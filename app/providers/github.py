@@ -11,7 +11,7 @@ class GitHubError(Exception):
 class GitHubProvider(ResearchExtractor):
     def __init__(self, token: str | None = None) -> None:
         self.base_url = "https://api.github.com"
-        self.headers: dict[str, str] = {"Accept": "application/vnd.github+json", "User-Agent": "content-agent"}
+        self.headers: dict[str, str] = {"Accept": "application/vnd.github+json", "User-Agent": "ProjectForge"}
         if token:
             self.headers["Authorization"] = f"Bearer {token}"
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:

@@ -38,7 +38,7 @@ def _build_service(base_dir: Path | None = None) -> ProjectService:
     return ProjectService(persistence=persistence, event_store=event_store, run_control=run_control, replan_control=replan_control)
 
 
-app = typer.Typer(add_completion=False, no_args_is_help=True)
+app = typer.Typer(add_completion=False, no_args_is_help=True, help="ProjectForge 项目管理 CLI")
 
 
 @app.command()
@@ -135,8 +135,8 @@ def events(project_id: str, base_dir: Path | None = typer.Option(None, "--base-d
             typer.echo(f"  payload: {event.payload}")
 
 
-replan_app = typer.Typer(add_completion=False, no_args_is_help=True)
-app.add_typer(replan_app, name="replan", help="Replan commands")
+replan_app = typer.Typer(add_completion=False, no_args_is_help=True, help="管理项目重新规划")
+app.add_typer(replan_app, name="replan", help="管理项目重新规划")
 
 
 def _dummy_task_graph() -> TaskGraph:
@@ -273,8 +273,8 @@ def replan_apply(project_id: str, proposal_id: str, base_dir: Path | None = type
     typer.echo(f"Status: {proposal.status.value}")
 
 
-run_app = typer.Typer(add_completion=False, no_args_is_help=True)
-app.add_typer(run_app, name="run", help="Run control commands")
+run_app = typer.Typer(add_completion=False, no_args_is_help=True, help="管理项目执行运行")
+app.add_typer(run_app, name="run", help="管理项目执行运行")
 
 
 @run_app.command("start")

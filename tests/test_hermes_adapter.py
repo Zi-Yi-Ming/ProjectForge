@@ -15,7 +15,7 @@ from app.schemas.implementation import (
 )
 
 
-PROJECT_ROOT = Path("/home/azureuser/content-agent")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _contract() -> TaskContract:

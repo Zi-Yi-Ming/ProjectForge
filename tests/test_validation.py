@@ -330,22 +330,22 @@ def test_max_validation_repair_cycles_concept() -> None:
 # =========================
 
 def test_p13_does_not_modify_blueprint() -> None:
-    source = Path("/home/azureuser/content-agent/app/agents/validator.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "app" / "agents" / "validator.py").read_text(encoding="utf-8")
     assert "ProjectBlueprint(" not in source
 
 
 def test_p13_does_not_modify_taskgraph() -> None:
-    source = Path("/home/azureuser/content-agent/app/agents/validator.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "app" / "agents" / "validator.py").read_text(encoding="utf-8")
     assert "TaskGraph(" not in source
 
 
 def test_p13_does_not_call_github_provider() -> None:
-    source = Path("/home/azureuser/content-agent/app/agents/validator.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "app" / "agents" / "validator.py").read_text(encoding="utf-8")
     assert "GitHubProvider" not in source
 
 
 def test_p13_does_not_call_research_matcher_scoring_jd() -> None:
-    source = Path("/home/azureuser/content-agent/app/agents/validator.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "app" / "agents" / "validator.py").read_text(encoding="utf-8")
     assert "ResearcherAgent" not in source
     assert "ProjectMatcher" not in source
     assert "RepositoryScorer" not in source
@@ -353,7 +353,7 @@ def test_p13_does_not_call_research_matcher_scoring_jd() -> None:
 
 
 def test_p13_does_not_write_files_in_validator() -> None:
-    source = Path("/home/azureuser/content-agent/app/agents/validator.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "app" / "agents" / "validator.py").read_text(encoding="utf-8")
     assert "write_text" not in source
     assert "json.dump" not in source
 
@@ -375,5 +375,5 @@ def test_deterministic_validator_deterministic() -> None:
 
 
 def test_validate_command_added_to_main() -> None:
-    source = Path("/home/azureuser/content-agent/main.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8")
     assert "validate" in source or "@app.command()" in source

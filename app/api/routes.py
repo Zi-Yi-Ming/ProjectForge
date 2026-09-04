@@ -43,7 +43,7 @@ def _to_response(project: Any) -> ProjectResponse:
 
 
 def create_api(service: ProjectService | None = None) -> FastAPI:
-    api = FastAPI(title="Content Agent Product API", version="0.1.0")
+    api = FastAPI(title="ProjectForge Product API", version="0.1.0")
     service = service or ProjectService()
 
     @api.post("/projects", response_model=ProjectResponse, status_code=201)

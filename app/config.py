@@ -37,11 +37,11 @@ class AppSettings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     step: StepSettings = Field(default_factory=StepSettings)
     github: GitHubSettings = Field(default_factory=GitHubSettings)
-    project_root: Path = Field(default=Path("/home/azureuser/content-agent").resolve())
-    tasks_dir: Path = Field(default_factory=lambda: Path("/home/azureuser/content-agent/tasks").resolve())
-    cache_dir: Path = Field(default_factory=lambda: Path("/home/azureuser/content-agent/cache").resolve())
-    logs_dir: Path = Field(default_factory=lambda: Path("/home/azureuser/content-agent/logs").resolve())
-    outputs_dir: Path = Field(default_factory=lambda: Path("/home/azureuser/content-agent/outputs").resolve())
+    project_root: Path = Field(default=_PROJECT_ROOT)
+    tasks_dir: Path = Field(default_factory=lambda: _PROJECT_ROOT / "tasks")
+    cache_dir: Path = Field(default_factory=lambda: _PROJECT_ROOT / "cache")
+    logs_dir: Path = Field(default_factory=lambda: _PROJECT_ROOT / "logs")
+    outputs_dir: Path = Field(default_factory=lambda: _PROJECT_ROOT / "outputs")
 
     def __init__(self, **data):  # type: ignore[override]
         data.setdefault("step", {})
