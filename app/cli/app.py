@@ -281,42 +281,58 @@ app.add_typer(run_app, name="run", help="管理项目执行运行")
 def run_start(project_id: str, base_dir: Path | None = typer.Option(None, "--base-dir")) -> None:
     service = _build_service(base_dir)
     try:
-        project = service.load(project_id)
+        result = service.execute_run(project_id, run_dir=base_dir or _default_base_dir())
     except ProjectNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
-    if project.status != ProjectStatus.READY:
-        typer.echo(f"Error: project is not READY: {project.status.value}", err=True)
-        raise typer.Exit(code=1)
-    run_id = f"run-{project.project_id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
-    typer.echo(f"Run started")
-    typer.echo(f"Run ID: {run_id}")
-    typer.echo(f"Project ID: {project.project_id}")
+    except ActiveRunExistsError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except InvalidProjectStateError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except PersistenceError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Run completed")
+    typer.echo(f"Project ID: {result.project_id}")
+    typer.echo(f"Status: {result.status.value}")
+    if result.last_run_id:
+        typer.echo(f"Last Run ID: {result.last_run_id}")
 
 
 @run_app.command("show")
 def run_show(project_id: str, run_id: str, base_dir: Path | None = typer.Option(None, "--base-dir")) -> None:
     service = _build_service(base_dir)
     try:
-        project = service.load(project_id)
+        run = service.run_control.get_run(run_id)
     except ProjectNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
-    typer.echo(f"Run ID: {run_id}")
-    typer.echo(f"Project ID: {project.project_id}")
-    typer.echo(f"Status: RUNNING")
+    except PersistenceError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Run ID: {run.run_id}")
+    typer.echo(f"Project ID: {run.project}")
+    typer.echo(f"Status: {run.status.value}")
 
 
 @run_app.command("cancel")
 def run_cancel(project_id: str, run_id: str, base_dir: Path | None = typer.Option(None, "--base-dir")) -> None:
     service = _build_service(base_dir)
     try:
-        project = service.load(project_id)
+        run = service.run_control.cancel_run(project_id, run_id)
     except ProjectNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+    except PersistenceError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     typer.echo(f"Cancellation requested for run {run_id}")
-    typer.echo(f"Project ID: {project.project_id}")
+    typer.echo(f"Project ID: {run.project}")
+    typer.echo(f"Status: {run.status.value}")
+    if run.blocking_reason:
+        typer.echo(f"Blocking Reason: {run.blocking_reason}")
 
 
 @run_app.command("resume")

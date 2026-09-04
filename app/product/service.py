@@ -183,6 +183,28 @@ class ProjectService:
         self.transition_to(project_id, ProjectStatus.READY)
         return self.load(project_id)
 
+    def execute_run(self, project_id: str, run_dir: Any = None, workflow: ProjectWorkflow | None = None) -> Project:
+        project = self.load(project_id)
+        if project.status != ProjectStatus.READY:
+            raise InvalidProjectStateError(f"Project {project_id} is not READY: {project.status}")
+        if not project.task_graph_ref:
+            raise InvalidProjectStateError(f"Project {project_id} does not have a persisted task_graph_ref.")
+
+        task_graph = (workflow or ProjectWorkflow()).load_task_graph(project_id)
+        if task_graph is None:
+            raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
+
+        resolved_run_dir = Path(run_dir) if run_dir is not None else None
+        try:
+            from app.agents.hermes_adapter import HermesAdapter
+            from app.agents.orchestrator import ExecutionOrchestrator
+            adapter = HermesAdapter(workspace=resolved_run_dir, timeout_seconds=300)
+            executor = ExecutionOrchestrator(adapter=adapter)
+        except Exception as exc:
+            raise InvalidProjectStateError(f"Failed to initialize executor: {exc}") from exc
+
+        return self.execute_ready_project(project_id, run_dir=resolved_run_dir, adapter=executor, workflow=workflow)
+
     def execute_ready_project(
         self,
         project_id: str,

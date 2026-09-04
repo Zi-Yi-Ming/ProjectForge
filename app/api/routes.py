@@ -19,6 +19,7 @@ from app.product.errors import (
     CommandNotAllowedError,
     InvalidProjectStateError,
     InvalidStateTransitionError,
+    PersistenceError,
     ProjectAlreadyExistsError,
     ProjectNotFoundError,
 )
@@ -158,32 +159,38 @@ def create_api(service: ProjectService | None = None) -> FastAPI:
                 content=ErrorResponse(error=ErrorDetail(code="PROJECT_NOT_FOUND", message=str(exc))).model_dump(),
             )
         try:
-            run = service.start_run(project_id, task_graph=None, run_dir=None, executor=None)
+            result = service.execute_run(project_id, run_dir=None)
         except InvalidProjectStateError as exc:
             return JSONResponse(
                 status_code=400,
                 content=ErrorResponse(error=ErrorDetail(code="INVALID_PROJECT_STATE", message=str(exc))).model_dump(),
             )
-        except RuntimeError as exc:
-            return JSONResponse(
-                status_code=409,
-                content=ErrorResponse(error=ErrorDetail(code="ACTIVE_RUN_EXISTS", message=str(exc))).model_dump(),
-            )
-        except Exception as exc:
+        except PersistenceError as exc:
             return JSONResponse(
                 status_code=500,
                 content=ErrorResponse(error=ErrorDetail(code="PERSISTENCE_ERROR", message=f"Failed to start run: {exc}")).model_dump(),
             )
-        return JSONResponse(status_code=201, content={"run": {"run_id": run.run_id, "project_id": project_id, "status": run.status.value}})
+        return JSONResponse(status_code=201, content={
+            "run": {
+                "run_id": result.last_run_id or "",
+                "project_id": project_id,
+                "status": result.status.value,
+            }
+        })
 
     @api.get("/projects/{project_id}/runs/{run_id}")
     def get_run(project_id: str, run_id: str) -> JSONResponse:
         try:
             run = service.run_control.get_run(run_id)
-        except Exception as exc:
+        except ProjectNotFoundError as exc:
             return JSONResponse(
                 status_code=404,
                 content=ErrorResponse(error=ErrorDetail(code="RUN_NOT_FOUND", message=str(exc))).model_dump(),
+            )
+        except PersistenceError as exc:
+            return JSONResponse(
+                status_code=500,
+                content=ErrorResponse(error=ErrorDetail(code="PERSISTENCE_ERROR", message=str(exc))).model_dump(),
             )
         return JSONResponse(status_code=200, content={"run": {"run_id": run.run_id, "project_id": run.project, "status": run.status.value}})
 
