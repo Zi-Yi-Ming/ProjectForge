@@ -27,6 +27,7 @@ from app.schemas.project import Project, ProjectStatus
 from app.schemas.research import ResearchOutput
 from app.schemas.scoring import RepositoryScore
 from app.schemas.task import TaskGraph
+from app.schemas.replan import ReplanProposal, ReplanProposalStatus
 
 _ARTIFACT_REF_FIELDS = {
     "jd_profile": "jd_profile_ref",
@@ -189,6 +190,79 @@ class ProjectService:
             raise InvalidProjectStateError(f"Project {project_id} is not READY: {project.status}")
         if not project.task_graph_ref:
             raise InvalidProjectStateError(f"Project {project_id} does not have a persisted task_graph_ref.")
+
+        task_graph = (workflow or ProjectWorkflow()).load_task_graph(project_id)
+        if task_graph is None:
+            raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
+
+        resolved_run_dir = Path(run_dir) if run_dir is not None else None
+        try:
+            from app.agents.hermes_adapter import HermesAdapter
+            from app.agents.orchestrator import ExecutionOrchestrator
+            adapter = HermesAdapter(workspace=resolved_run_dir, timeout_seconds=300)
+            executor = ExecutionOrchestrator(adapter=adapter)
+        except Exception as exc:
+            raise InvalidProjectStateError(f"Failed to initialize executor: {exc}") from exc
+
+        return self.execute_ready_project(project_id, run_dir=resolved_run_dir, adapter=executor, workflow=workflow)
+
+    def apply_replan(
+        self,
+        project_id: str,
+        proposal_id: str,
+        run_id: str,
+        workflow: ProjectWorkflow | None = None,
+    ) -> ReplanProposal:
+        project = self.load(project_id)
+        task_graph = (workflow or ProjectWorkflow()).load_task_graph(project_id)
+        if task_graph is None:
+            raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
+
+        proposal = self.replan_control.apply_proposal(project_id, proposal_id, task_graph, run_id=run_id)
+        if proposal.status != ReplanProposalStatus.APPLIED:
+            raise InvalidProjectStateError(f"Proposal {proposal_id} was not applied.")
+
+        tg_ref = (workflow or ProjectWorkflow()).persist_task_graph(project_id, task_graph)
+        self.update_artifact_ref(project_id, "task_graph", tg_ref)
+        return proposal
+
+    def resume_project(
+        self,
+        project_id: str,
+        proposal_id: str,
+        run_id: str,
+        run_dir: Any = None,
+        workflow: ProjectWorkflow | None = None,
+    ) -> Project:
+        project = self.load(project_id)
+        if project.status not in {ProjectStatus.FAILED, ProjectStatus.BLOCKED, ProjectStatus.EXECUTING}:
+            raise InvalidProjectStateError(f"Project {project_id} is not in a resumable state: {project.status}")
+
+        proposal = self.replan_control.get_proposal(run_id, proposal_id)
+        if proposal.status != ReplanProposalStatus.APPLIED:
+            raise InvalidProjectStateError("Proposal must be APPLIED for resume.")
+
+        task_graph = (workflow or ProjectWorkflow()).load_task_graph(project_id)
+        if task_graph is None:
+            raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
+
+        return self.execute_replan_run(project_id, run_id, proposal_id, run_dir=run_dir, workflow=workflow)
+
+    def execute_replan_run(
+        self,
+        project_id: str,
+        run_id: str,
+        proposal_id: str,
+        run_dir: Any = None,
+        workflow: ProjectWorkflow | None = None,
+    ) -> Project:
+        project = self.load(project_id)
+        if project.status not in {ProjectStatus.FAILED, ProjectStatus.BLOCKED, ProjectStatus.EXECUTING}:
+            raise InvalidProjectStateError(f"Project {project_id} is not in a resumable state: {project.status}")
+
+        proposal = self.replan_control.get_proposal(run_id, proposal_id)
+        if proposal.status != ReplanProposalStatus.APPLIED:
+            raise InvalidProjectStateError("Proposal must be APPLIED for resume.")
 
         task_graph = (workflow or ProjectWorkflow()).load_task_graph(project_id)
         if task_graph is None:

@@ -21,6 +21,7 @@ from app.product.project_persistence import ProjectPersistence
 from app.product.replan_control import ReplanControl
 from app.product.run_control import RunControl
 from app.product.service import ProjectService
+from app.product.workflow import ProjectWorkflow
 from app.schemas.project import ProjectStatus
 from app.schemas.task import Task, TaskGraph, TaskStatus
 
@@ -151,7 +152,16 @@ def _dummy_task_graph() -> TaskGraph:
 def replan_create(project_id: str, run_id: str, base_dir: Path | None = typer.Option(None, "--base-dir")) -> None:
     service = _build_service(base_dir)
     try:
-        proposal = service.replan_control.create_proposal(project_id, run_id, _dummy_task_graph())
+        workflow = ProjectWorkflow()
+        task_graph = workflow.load_task_graph(project_id)
+    except ProjectNotFoundError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except PersistenceError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    try:
+        proposal = service.replan_control.create_proposal(project_id, run_id, task_graph)
     except ProjectNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -258,7 +268,7 @@ def replan_apply(project_id: str, proposal_id: str, base_dir: Path | None = type
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     try:
-        proposal = service.replan_control.apply_proposal(project_id, proposal_id, _dummy_task_graph(), run_id=project.last_run_id or "")
+        proposal = service.apply_replan(project_id, proposal_id, run_id=project.last_run_id or "")
     except ProjectNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -270,6 +280,7 @@ def replan_apply(project_id: str, proposal_id: str, base_dir: Path | None = type
         raise typer.Exit(code=1) from exc
     typer.echo(f"Proposal applied")
     typer.echo(f"Proposal ID: {proposal.proposal_id}")
+    typer.echo(f"Run ID: {proposal.run_id}")
     typer.echo(f"Status: {proposal.status.value}")
 
 
@@ -336,10 +347,10 @@ def run_cancel(project_id: str, run_id: str, base_dir: Path | None = typer.Optio
 
 
 @run_app.command("resume")
-def run_resume(project_id: str, base_dir: Path | None = typer.Option(None, "--base-dir")) -> None:
+def run_resume(project_id: str, run_id: str, proposal_id: str, base_dir: Path | None = typer.Option(None, "--base-dir")) -> None:
     service = _build_service(base_dir)
     try:
-        run = service.replan_control.resume_project(project_id, _dummy_task_graph(), base_dir or _default_base_dir())
+        result = service.resume_project(project_id, proposal_id, run_id, run_dir=base_dir or _default_base_dir())
     except ProjectNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -350,9 +361,10 @@ def run_resume(project_id: str, base_dir: Path | None = typer.Option(None, "--ba
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(f"Run resumed")
-    typer.echo(f"Run ID: {run.run_id}")
     typer.echo(f"Project ID: {project_id}")
-    typer.echo(f"Status: {run.status.value}")
+    typer.echo(f"Status: {result.status.value}")
+    if result.last_run_id:
+        typer.echo(f"Last Run ID: {result.last_run_id}")
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ from app.product.errors import (
     ProjectAlreadyExistsError,
     ProjectNotFoundError,
 )
+from app.product.workflow import ProjectWorkflow
 from app.product.service import ProjectService
 from app.schemas.execution import ExecutionRun, ExecutionStatus
 from app.schemas.project import ProjectStatus
@@ -208,7 +209,10 @@ def create_api(service: ProjectService | None = None) -> FastAPI:
     @api.post("/projects/{project_id}/runs/{run_id}/replan")
     def create_replan(project_id: str, run_id: str) -> JSONResponse:
         try:
-            proposal = service.replan_control.create_proposal(project_id, run_id, _dummy_task_graph())
+            task_graph = ProjectWorkflow().load_task_graph(project_id)
+            if task_graph is None:
+                raise InvalidProjectStateError("Task graph could not be loaded.")
+            proposal = service.replan_control.create_proposal(project_id, run_id, task_graph)
         except ProjectNotFoundError as exc:
             return JSONResponse(
                 status_code=404,
@@ -272,7 +276,12 @@ def create_api(service: ProjectService | None = None) -> FastAPI:
     @api.post("/projects/{project_id}/replans/{run_id}/{proposal_id}/apply")
     def apply_replan(project_id: str, run_id: str, proposal_id: str) -> JSONResponse:
         try:
-            proposal = service.replan_control.apply_proposal(project_id, proposal_id, _dummy_task_graph(), run_id=run_id)
+            proposal = service.apply_replan(project_id, proposal_id, run_id=run_id)
+        except ProjectNotFoundError as exc:
+            return JSONResponse(
+                status_code=404,
+                content=ErrorResponse(error=ErrorDetail(code="PROJECT_NOT_FOUND", message=str(exc))).model_dump(),
+            )
         except InvalidProjectStateError as exc:
             return JSONResponse(
                 status_code=400,
@@ -286,9 +295,9 @@ def create_api(service: ProjectService | None = None) -> FastAPI:
         return JSONResponse(status_code=200, content={"proposal": {"proposal_id": proposal.proposal_id, "run_id": proposal.run_id, "status": proposal.status.value}})
 
     @api.post("/projects/{project_id}/runs/resume")
-    def resume_run(project_id: str) -> JSONResponse:
+    def resume_run(project_id: str, run_id: str, proposal_id: str) -> JSONResponse:
         try:
-            run = service.replan_control.resume_project(project_id, _dummy_task_graph(), _dummy_run_dir())
+            result = service.resume_project(project_id, proposal_id, run_id)
         except ProjectNotFoundError as exc:
             return JSONResponse(
                 status_code=404,
@@ -304,7 +313,7 @@ def create_api(service: ProjectService | None = None) -> FastAPI:
                 status_code=500,
                 content=ErrorResponse(error=ErrorDetail(code="PERSISTENCE_ERROR", message=f"Failed to resume project: {exc}")).model_dump(),
             )
-        return JSONResponse(status_code=201, content={"run": {"run_id": run.run_id, "project_id": project_id, "status": run.status.value}})
+        return JSONResponse(status_code=201, content={"project": {"project_id": project_id, "status": result.status.value, "last_run_id": result.last_run_id or ""}})
 
     return api
 
