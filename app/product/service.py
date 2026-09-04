@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from app.product.errors import (
@@ -13,15 +14,19 @@ from app.product.errors import (
 from app.product.event_store import EventStore
 from app.product.lifecycle import ProjectLifecycle
 from app.product.project_persistence import ProjectPersistence
+from app.product.project_artifact_store import ProjectArtifactStore
 from app.product.run_control import RunControl
+from app.agents.orchestrator import ExecutionOrchestrator
 from app.product.replan_control import ReplanControl
 from app.product.workflow import ProjectWorkflow
+from app.schemas.blueprint import UserProfile
 from app.schemas.event import Actor, ProductEvent
+from app.schemas.execution import ExecutionRun, ExecutionStatus
+from app.schemas.implementation import ProjectMap
 from app.schemas.project import Project, ProjectStatus
+from app.schemas.research import ResearchOutput
 from app.schemas.scoring import RepositoryScore
 from app.schemas.task import TaskGraph
-from app.schemas.research import ResearchOutput
-from app.schemas.blueprint import UserProfile
 
 _ARTIFACT_REF_FIELDS = {
     "jd_profile": "jd_profile_ref",
@@ -176,4 +181,52 @@ class ProjectService:
         self.update_artifact_ref(project_id, "task_graph", tg_ref)
 
         self.transition_to(project_id, ProjectStatus.READY)
+        return self.load(project_id)
+
+    def execute_ready_project(
+        self,
+        project_id: str,
+        run_dir: Any = None,
+        adapter: Any = None,
+        workflow: ProjectWorkflow | None = None,
+    ) -> Project:
+        project = self.load(project_id)
+        if project.status != ProjectStatus.READY:
+            raise InvalidProjectStateError(f"Project {project_id} is not READY: {project.status}")
+        if not project.task_graph_ref:
+            raise InvalidProjectStateError(f"Project {project_id} does not have a persisted task_graph_ref.")
+
+        task_graph = (workflow or ProjectWorkflow()).load_task_graph(project_id)
+        if task_graph is None:
+            raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
+
+        project = self.transition_to(project_id, ProjectStatus.EXECUTING)
+        resolved_run_dir = Path(run_dir) if run_dir is not None else None
+        if isinstance(adapter, ExecutionOrchestrator):
+            executor = adapter
+        else:
+            executor = ExecutionOrchestrator(adapter=adapter)
+        run = self.run_control.start_run(project, task_graph=task_graph, run_dir=resolved_run_dir, executor=executor)
+        self._active_runs[project_id] = run.run_id
+        project.last_run_id = run.run_id
+        project.updated_at = _now_iso()
+        self.persistence.save_project(project)
+        self.event_store.append(
+            ProductEvent(
+                event_id=_new_event_id(),
+                event_type="RUN_CREATED",
+                project_id=project_id,
+                timestamp=_now_iso(),
+                actor=Actor.SYSTEM,
+                payload={"run_id": run.run_id},
+            )
+        )
+        completed = self.run_control.complete_run(project_id, run.run_id, run.status)
+        self._active_runs.pop(project_id, None)
+        if completed.status == ExecutionStatus.COMPLETED:
+            self.transition_to(project_id, ProjectStatus.COMPLETED)
+        elif completed.status == ExecutionStatus.FAILED:
+            self.transition_to(project_id, ProjectStatus.FAILED)
+        else:
+            self.transition_to(project_id, ProjectStatus.BLOCKED)
         return self.load(project_id)
