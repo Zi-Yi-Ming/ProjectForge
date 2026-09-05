@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,6 +32,12 @@ class HermesAdapter(CodingAgentAdapter):
         self.workspace = workspace
         self.timeout_seconds = timeout_seconds
         self.hermes_cli = self._find_hermes_cli()
+        self._sandbox_binary = self._detect_sandbox()
+        if self._sandbox_binary is None:
+            raise RuntimeError(
+                "Workspace isolation is required but no sandbox binary is available. "
+                "Install bubblewrap/bwrap to enable Hermes execution."
+            )
 
     def execute(
         self,
@@ -50,8 +58,7 @@ class HermesAdapter(CodingAgentAdapter):
         task_contract: TaskContract,
         project_map: ProjectMap,
     ) -> AgentExecutionResult:
-        workspace = self.workspace or Path(".")
-        if not workspace.exists() or not workspace.is_dir():
+        if self.workspace is None or not self.workspace.exists() or not self.workspace.is_dir():
             return AgentExecutionResult(
                 task_id=task_contract.task_id,
                 agent="hermes",
@@ -61,11 +68,12 @@ class HermesAdapter(CodingAgentAdapter):
                 scope_status=ScopeStatus.NEEDS_REVIEW,
                 test_results=[],
                 summary="",
-                errors=[f"Workspace not found: {workspace}"],
+                errors=[f"Workspace not found: {self.workspace}"],
                 blocking_reason="Workspace not found",
                 git_checkpoint=GitCheckpoint(),
             )
 
+        workspace = self.workspace
         prompt = self._build_prompt(task_contract, project_map)
         head_before, pre_existing = self._git_checkpoint_before(workspace)
 
@@ -90,6 +98,36 @@ class HermesAdapter(CodingAgentAdapter):
         assert last_result is not None
         return last_result
 
+    def _detect_sandbox(self) -> str | None:
+        for name in ("bwrap", "bubblewrap"):
+            if shutil.which(name):
+                return name
+        return None
+
+    def _build_sandbox_command(self, workspace: Path, hermes_cmd: list[str]) -> list[str]:
+        sandbox = self._sandbox_binary
+        if sandbox is None:
+            raise RuntimeError("Sandbox binary is not available")
+
+        workspace = workspace.resolve()
+        sandbox_cmd = [
+            sandbox,
+            "--unshare-all",
+            "--new-session",
+            "--setenv", "HOME", "/workspace",
+            "--bind", str(workspace), "/workspace",
+            "--ro-bind", "/usr", "/usr",
+            "--ro-bind", "/bin", "/bin",
+            "--ro-bind", "/lib", "/lib",
+            "--ro-bind", "/lib64", "/lib64",
+            "--ro-bind", "/sbin", "/sbin",
+            "--proc", "/proc",
+            "--dev", "/dev",
+            "--chdir", "/workspace",
+        ]
+        sandbox_cmd.extend(hermes_cmd)
+        return sandbox_cmd
+
     def _run_single_attempt(
         self,
         workspace: Path,
@@ -99,12 +137,12 @@ class HermesAdapter(CodingAgentAdapter):
         head_before: str,
         pre_existing: list[str],
     ) -> AgentExecutionResult:
-        cmd = [
+        hermes_cmd = [
             self.hermes_cli,
             "-z",
             prompt,
             "--in",
-            str(workspace),
+            "/workspace",
             "--safe-mode",
             "--accept-hooks",
             "--ignore-user-config",
@@ -112,11 +150,11 @@ class HermesAdapter(CodingAgentAdapter):
         ]
 
         try:
+            cmd = self._build_sandbox_command(workspace, hermes_cmd)
             proc = subprocess.run(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                cwd=str(workspace),
                 timeout=self.timeout_seconds,
             )
             stdout = proc.stdout.decode("utf-8", errors="replace")

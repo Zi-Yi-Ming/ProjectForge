@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -36,6 +37,13 @@ _ARTIFACT_REF_FIELDS = {
 }
 
 
+def _runtime_base_dir() -> Path:
+    base = os.environ.get("PROJECTFORGE_RUNTIME_DIR")
+    if base:
+        return Path(base).resolve()
+    return Path.cwd().resolve() / ".runtime"
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -51,6 +59,10 @@ class ProjectService:
         self._active_runs: dict[str, str] = {}
         self.run_control = run_control or RunControl()
         self.replan_control = replan_control or ReplanControl(persistence=self.persistence, run_control=self.run_control)
+
+    @staticmethod
+    def _auto_run_dir(project_id: str) -> Path:
+        return _runtime_base_dir() / "projects" / project_id / "runs"
 
     def create(self, name: str) -> Project:
         project = Project(name=name)
@@ -195,7 +207,7 @@ class ProjectService:
         if task_graph is None:
             raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
 
-        resolved_run_dir = Path(run_dir) if run_dir is not None else None
+        resolved_run_dir = Path(run_dir) if run_dir is not None else self._auto_run_dir(project_id)
         try:
             from app.agents.hermes_adapter import HermesAdapter
             from app.agents.orchestrator import ExecutionOrchestrator
@@ -271,7 +283,7 @@ class ProjectService:
             raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
 
         project = self.transition_to(project_id, ProjectStatus.EXECUTING)
-        resolved_run_dir = Path(run_dir) if run_dir is not None else None
+        resolved_run_dir = Path(run_dir) if run_dir is not None else self._auto_run_dir(project_id)
         try:
             from app.agents.hermes_adapter import HermesAdapter
             from app.agents.orchestrator import ExecutionOrchestrator

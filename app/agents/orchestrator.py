@@ -93,7 +93,7 @@ class ExecutionOrchestrator:
                     self.persistence.save_run(run)
                 return run
 
-            contract = self._build_contract(next_task, project_map)
+            contract = self._build_contract(next_task, project_map, run_dir=run_dir)
             run.current_task_id = next_task.id
             next_task.status = TaskStatus.IN_PROGRESS
             if self.persistence is not None:
@@ -303,7 +303,8 @@ class ExecutionOrchestrator:
         self.persistence.save_task_record(run.run_id, record)
         self.persistence.save_run(run)
 
-    def _build_contract(self, task: Task, project_map: ProjectMap) -> TaskContract:
+    def _build_contract(self, task: Task, project_map: ProjectMap, run_dir: Path | None = None) -> TaskContract:
+        allowed_paths = [str(run_dir)] if run_dir is not None else []
         return TaskContract(
             task_id=task.id,
             project="",
@@ -321,7 +322,7 @@ class ExecutionOrchestrator:
             technical_points=list(task.technical_points),
             interview_points=list(task.interview_points),
             project_map=project_map,
-            allowed_paths=[],
+            allowed_paths=allowed_paths,
             test_scope=[],
             execution_rules=[],
         )
