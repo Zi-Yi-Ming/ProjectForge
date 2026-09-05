@@ -89,6 +89,7 @@ COMPLETED / FAILED / BLOCKED
 
 - Python 3.10+
 - 已安装 Hermes CLI 并可在终端执行 `hermes`
+- 已安装 `bubblewrap` / `bwrap`，真实 Hermes 执行需要 sandbox 隔离
 - 可选：StepFun API key、GitHub token
 
 ### 安装
@@ -134,10 +135,37 @@ python -m app.cli replan apply <project_id> <proposal_id>
 python -m app.cli run start <project_id>
 python -m app.cli run show <project_id> <run_id>
 python -m app.cli run cancel <project_id> <run_id>
-python -m app.cli run resume <project_id>
+python -m app.cli run resume <project_id> <run_id> <proposal_id>
 ```
 
-> 注意：部分命令仍处于 scaffold 阶段，请结合实际代码行为使用，不要仅凭 README 推断完整执行能力。
+> 注意：`run start` / `run resume` / `replan apply` 已接入真实执行链路；`run resume` 需要提供 `<run_id>` 和 `<proposal_id>`。`run show` / `run cancel` 依赖持久化执行记录。实际可执行能力请以代码行为为准。
+
+## 5 分钟可复现演示
+
+以下演示基于当前代码真实链路，不依赖人工脑补。
+前置条件：已安装 `bubblewrap` / `bwrap`，否则 `run start` / `run resume` / `replan apply` 会因 sandbox 不可用而失败。
+
+```bash
+# 1. 创建项目
+python -m app.cli create "Java 后端开发实习生"
+
+# 2. 推进到 READY
+python -m app.cli transition <project_id> READY
+
+# 3. 执行运行
+python -m app.cli run start <project_id>
+
+# 4. 查看运行
+python -m app.cli run show <project_id> <run_id>
+
+# 5. 若运行失败，查看失败后状态
+python -m app.cli replan create <project_id> <run_id>
+python -m app.cli replan approve <project_id> <proposal_id>
+python -m app.cli replan apply <project_id> <proposal_id>
+
+# 6. 从失败恢复
+python -m app.cli run resume <project_id> <run_id> <proposal_id>
+```
 
 ## 示例
 
@@ -244,9 +272,10 @@ pytest tests/test_project_core.py tests/test_workflow.py tests/test_run_control.
 ## 项目状态
 
 - Product Core：已实现
-- CLI：已实现基础入口，部分命令仍在完善
-- API：已实现基础接口
-- Hermes 集成：已接入真实 Hermes CLI
+- CLI：stable
+- API：stable
+- Hermes 集成：已接入真实 Hermes CLI，受 bwrap sandbox 约束
+- Workspace isolation：已实现 fail-closed 执行边界
 - Web UI：未实现
 - 多用户 / 云执行：未实现
 

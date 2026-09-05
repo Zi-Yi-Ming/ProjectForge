@@ -9,3 +9,4 @@ tasks/
 cache/
 logs/
 outputs/
+*.egg-info/
