@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from app.schemas.event import Actor, ProductEvent
+
+
+def new_event_id() -> str:
+    # Wall-clock microseconds alone collide (Windows timer granularity is
+    # ~1ms), and append() dedupes by id -- a collision silently drops events.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    return f"evt-{stamp}-{secrets.token_hex(4)}"
 
 
 class EventStore:
@@ -56,5 +65,7 @@ class EventStore:
                     events.append(ProductEvent.model_validate(data))
                 except (json.JSONDecodeError, ValueError):
                     continue
-        events.sort(key=lambda e: (e.timestamp, e.event_id))
+        # Stable sort on timestamp only: ties keep append order, which is the
+        # event log's source of truth (ids are not order-significant).
+        events.sort(key=lambda e: e.timestamp)
         return events

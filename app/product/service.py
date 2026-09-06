@@ -12,7 +12,7 @@ from app.product.errors import (
     InvalidStateTransitionError,
     ProjectNotFoundError,
 )
-from app.product.event_store import EventStore
+from app.product.event_store import EventStore, new_event_id
 from app.product.lifecycle import ProjectLifecycle
 from app.product.project_persistence import ProjectPersistence
 from app.product.project_artifact_store import ProjectArtifactStore
@@ -49,7 +49,7 @@ def _now_iso() -> str:
 
 
 def _new_event_id() -> str:
-    return f"evt-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
+    return new_event_id()
 
 
 class ProjectService:

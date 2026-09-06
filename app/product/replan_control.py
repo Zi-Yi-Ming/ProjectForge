@@ -13,7 +13,7 @@ from app.product.errors import (
     InvalidProjectStateError,
     ProjectNotFoundError,
 )
-from app.product.event_store import Actor, EventStore, ProductEvent
+from app.product.event_store import Actor, EventStore, ProductEvent, new_event_id
 from app.product.project_persistence import ProjectPersistence
 from app.product.run_control import RunControl
 from app.schemas.execution import ExecutionRun, ExecutionStatus
@@ -59,7 +59,7 @@ class ReplanControl:
         if self.event_store is None:
             return
         event = ProductEvent(
-            event_id=f"evt-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
+            event_id=new_event_id(),
             event_type=event_type,
             project_id=project_id,
             run_id=run_id,

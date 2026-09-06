@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -165,3 +166,29 @@ def test_restart_preserves_project_and_events(tmp_path: Path) -> None:
         "PROJECT_STATE_CHANGED",
         "PROJECT_STATE_CHANGED",
     ]
+
+
+def test_rapid_event_appends_are_never_dropped_or_reordered(tmp_path: Path) -> None:
+    # Wall-clock-only ids collide on coarse timer granularity; a collision
+    # used to be silently swallowed by append()'s dedupe.
+    from app.product.event_store import new_event_id
+
+    store = EventStore(base_dir=tmp_path)
+    project_id = "proj-rapid"
+    count = 200
+    for index in range(count):
+        store.append(
+            ProductEvent(
+                event_id=new_event_id(),
+                event_type="EVT",
+                project_id=project_id,
+                run_id="",
+                actor=Actor.SYSTEM,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                payload={"index": index},
+            )
+        )
+    events = store.get_events(project_id)
+    assert len(events) == count
+    assert len({e.event_id for e in events}) == count
+    assert [e.payload["index"] for e in events] == list(range(count))
