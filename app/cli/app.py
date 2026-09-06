@@ -23,7 +23,6 @@ from app.product.run_control import RunControl
 from app.product.service import ProjectService
 from app.product.workflow import ProjectWorkflow
 from app.schemas.project import ProjectStatus
-from app.schemas.task import Task, TaskGraph, TaskStatus
 
 
 def _default_base_dir() -> Path:
@@ -138,14 +137,6 @@ def events(project_id: str, base_dir: Path | None = typer.Option(None, "--base-d
 
 replan_app = typer.Typer(add_completion=False, no_args_is_help=True, help="管理项目重新规划")
 app.add_typer(replan_app, name="replan", help="管理项目重新规划")
-
-
-def _dummy_task_graph() -> TaskGraph:
-    tasks = [
-        Task(id="T1", phase_id="P1", title="T1", goal="g1", why="w1", dependencies=[], status=TaskStatus.DONE, scope="Core", acceptance_criteria=[], out_of_scope=[], interview_points=[]),
-        Task(id="T2", phase_id="P1", title="T2", goal="g2", why="w2", dependencies=["T1"], status=TaskStatus.FAILED, scope="Core", acceptance_criteria=[], out_of_scope=[], interview_points=[]),
-    ]
-    return TaskGraph(project="demo", tasks=tasks, total_tasks=2, required_tasks=2, optional_tasks=0)
 
 
 @replan_app.command("create")

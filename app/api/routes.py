@@ -316,17 +316,3 @@ def create_api(service: ProjectService | None = None) -> FastAPI:
         return JSONResponse(status_code=201, content={"project": {"project_id": project_id, "status": result.status.value, "last_run_id": result.last_run_id or ""}})
 
     return api
-
-
-def _dummy_task_graph() -> Any:
-    from app.schemas.task import Task, TaskGraph, TaskStatus
-    tasks = [
-        Task(id="T1", phase_id="P1", title="T1", goal="g1", why="w1", dependencies=[], status=TaskStatus.DONE, scope="Core", acceptance_criteria=[], out_of_scope=[], interview_points=[]),
-        Task(id="T2", phase_id="P1", title="T2", goal="g2", why="w2", dependencies=["T1"], status=TaskStatus.FAILED, scope="Core", acceptance_criteria=[], out_of_scope=[], interview_points=[]),
-    ]
-    return TaskGraph(project="demo", tasks=tasks, total_tasks=2, required_tasks=2, optional_tasks=0)
-
-
-def _dummy_run_dir() -> Any:
-    from pathlib import Path
-    return Path("/tmp/dummy-run-dir")

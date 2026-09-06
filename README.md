@@ -90,7 +90,6 @@ COMPLETED / FAILED / BLOCKED
 - Python 3.10+
 - 已安装 Hermes CLI 并可在终端执行 `hermes`
 - 已安装 `bubblewrap` / `bwrap`，真实 Hermes 执行需要 sandbox 隔离
-- 可选：StepFun API key、GitHub token
 
 ### 安装
 
@@ -100,7 +99,6 @@ cd ProjectForge
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
 ```
 
 ### CLI 入口
@@ -248,6 +246,53 @@ Java 后端开发实习生
              Validation            Replan
 ```
 
+## 安装
+
+要求 Python 3.10+。
+
+```bash
+git clone https://github.com/Zi-Yi-Ming/ProjectForge.git
+cd ProjectForge
+pip install -e .
+```
+
+安装后可用 `projectforge` 命令（也可通过 `python -m app.cli.app` 调用）。
+
+### 运行真实执行（可选）
+
+约束式执行通过 [Hermes Agent](https://github.com/NousResearch/hermes-agent) 在 bubblewrap sandbox 中完成，需要：
+
+- Hermes CLI（`hermes` 在 PATH 中，且已完成模型提供商认证）
+- bubblewrap（`bwrap`，Linux；Ubuntu 24.04+ 需为 bwrap 配置允许 unprivileged user namespace 的 AppArmor profile）
+
+缺少任一依赖时执行会 fail-closed 拒绝启动；测试套件会自动跳过真实执行用例。
+
+## 快速开始
+
+```bash
+# 创建项目
+projectforge create "我的项目" --base-dir .runtime
+
+# 推进项目状态：ANALYZING -> PLANNING -> READY
+projectforge transition <project_id> ANALYZING --base-dir .runtime
+projectforge transition <project_id> PLANNING --base-dir .runtime
+projectforge transition <project_id> READY --base-dir .runtime
+
+# 启动约束式执行（需要 Hermes + bwrap）
+projectforge run start <project_id> --base-dir .runtime
+
+# 查看运行 / 取消
+projectforge run show <project_id> <run_id> --base-dir .runtime
+projectforge run cancel <project_id> <run_id> --base-dir .runtime
+
+# 执行失败后发起重新规划（人工审批）
+projectforge replan create <project_id> <run_id> --base-dir .runtime
+projectforge replan approve <project_id> <proposal_id> --base-dir .runtime
+projectforge replan apply <project_id> <proposal_id> <run_id> --base-dir .runtime
+```
+
+也提供 FastAPI 服务（`app.api.app:create_api`），运行/重新规划可通过 REST API 驱动。
+
 ## 开发
 
 ```bash
@@ -260,14 +305,7 @@ pytest tests/test_project_core.py tests/test_workflow.py tests/test_run_control.
 
 ## 配置
 
-环境变量通过 `.env` 加载，参见 `.env.example`。
-
-| 环境变量 | 用途 |
-| --- | --- |
-| `STEPFUN_API_KEY` | StepFun API key |
-| `GITHUB_TOKEN` | GitHub token |
-| `STEPFUN_BASE_URL` | StepFun API 地址 |
-| `LOG_LEVEL` | 日志级别 |
+ProjectForge 当前不依赖任何环境变量或 `.env` 文件。
 
 ## 项目状态
 

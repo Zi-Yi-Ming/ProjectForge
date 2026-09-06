@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "projectforge"
-version = "0.1.0"
+version = "0.1.1"
 description = "基于岗位 JD 的工程项目教练与约束式执行引擎"
 readme = "README.md"
 license = { text = "MIT" }
@@ -22,11 +22,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "httpx==0.28.1",
+    "fastapi==0.141.1",
     "pydantic==2.13.4",
-    "python-dotenv==1.2.3",
     "typer==0.27.1",
-    "tenacity==9.1.4",
 ]
 
 [project.scripts]

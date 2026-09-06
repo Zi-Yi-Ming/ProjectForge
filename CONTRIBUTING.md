@@ -10,7 +10,6 @@ cd ProjectForge
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
 ```
 
 ## 运行测试
@@ -37,5 +36,5 @@ pytest
 
 ## 注意
 
-- 本项目当前不维护 `pip install projectforge` 安装路径，先以仓库 clone 方式验证。
+- 仓库支持 `pip install -e .`，安装后可直接使用 `projectforge` 命令；开发验证请以仓库 clone 方式为准。
 - Hermes / bwrap 相关改动请单独标注，便于后续做 runtime verification。
