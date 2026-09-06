@@ -223,14 +223,10 @@ class ReplanControl:
         for record in run.task_results:
             if record.task_id == task_id and record.execution_result is not None:
                 return record.execution_result
-        raise InvalidProjectStateError(
-            f"Missing execution result for task {task_id} in run {run.run_id}."
-        )
+        return None
 
     def _validation_result(self, run: ExecutionRun, task_id: str) -> Any:
         for record in run.task_results:
             if record.task_id == task_id and record.validation_result is not None:
                 return record.validation_result
-        raise InvalidProjectStateError(
-            f"Missing validation result for task {task_id} in run {run.run_id}."
-        )
+        return None

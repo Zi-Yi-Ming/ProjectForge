@@ -20,6 +20,18 @@ class FailureAnalyzer:
         if validation_result is not None:
             if validation_result.failures:
                 evidence.extend(validation_result.failures)
+        if implementation_result is None:
+            # The adapter never produced a result: crash before/inside the
+            # agent call. Only the task contract is known.
+            return FailureAnalysis(
+                task_id=task_contract.task_id,
+                failure_type=FailureType.AGENT_FAILURE,
+                root_cause_hypothesis="Agent produced no execution result (crash or pre-execution error).",
+                evidence=evidence,
+                affected_scope=task_contract.implementation_scope,
+                recoverability=Recoverability.RETRYABLE if attempt_count < 2 else Recoverability.BLOCKED,
+                recommended_action=RecommendedAction.RETRY if attempt_count < 2 else RecommendedAction.BLOCK,
+            )
         if implementation_result.errors:
             evidence.extend(implementation_result.errors)
         if implementation_result.git_checkpoint is not None:
