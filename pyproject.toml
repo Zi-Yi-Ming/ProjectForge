@@ -30,6 +30,9 @@ dependencies = [
 [project.scripts]
 projectforge = "app.cli.app:app"
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [tool.setuptools.packages.find]
 include = ["app*"]
 
