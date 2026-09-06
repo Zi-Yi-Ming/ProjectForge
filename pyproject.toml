@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "projectforge"
-version = "0.1.1"
+version = "0.1.2"
 description = "基于岗位 JD 的工程项目教练与约束式执行引擎"
 readme = "README.md"
 license = { text = "MIT" }
