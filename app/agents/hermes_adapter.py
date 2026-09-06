@@ -112,7 +112,12 @@ class HermesAdapter(CodingAgentAdapter):
         workspace = workspace.resolve()
         sandbox_cmd = [
             sandbox,
-            "--unshare-all",
+            # Keep the host network namespace: hermes must reach the LLM API
+            # (true network isolation would require slirp4netns, as in hermes'
+            # own dev sandbox). On Ubuntu >= 24.04 bwrap also needs an
+            # AppArmor profile permitting unprivileged user namespaces.
+            "--unshare-ipc",
+            "--unshare-pid",
             "--new-session",
             "--setenv", "HOME", "/workspace",
             "--bind", str(workspace), "/workspace",
@@ -125,6 +130,18 @@ class HermesAdapter(CodingAgentAdapter):
             "--dev", "/dev",
             "--chdir", "/workspace",
         ]
+        for etc_file in ("/etc/resolv.conf", "/etc/hosts"):
+            if Path(etc_file).exists():
+                sandbox_cmd.extend(["--ro-bind", etc_file, etc_file])
+        home = Path.home()
+        for support_dir in (home / ".local", home / ".hermes"):
+            if support_dir.exists():
+                sandbox_cmd.extend(["--ro-bind", str(support_dir), str(support_dir)])
+        hermes_home = home / ".hermes"
+        if hermes_home.exists():
+            # hermes resolves its config/auth relative to HOME, so expose the
+            # real hermes home inside the sandbox at /workspace/.hermes too.
+            sandbox_cmd.extend(["--bind", str(hermes_home), "/workspace/.hermes"])
         sandbox_cmd.extend(hermes_cmd)
         return sandbox_cmd
 

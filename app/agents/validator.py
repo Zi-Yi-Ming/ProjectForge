@@ -53,32 +53,8 @@ class DeterministicValidator:
             )
             manual_review_items.append(criterion)
 
-        test_command = f"{sys.executable} -m pytest -q"
-        command_result = self._run_command(test_command, workspace=workspace)
-        test_results.append(command_result.stdout)
-        evidence.append(f"test_command={test_command}")
-        evidence.append(f"test_exit_code={command_result.exit_code}")
-        if command_result.exit_code == 0:
-            criterion_results.append(
-                CriterionResult(
-                    criterion="Self-test execution",
-                    type=CriterionType.TEST,
-                    status=CriterionStatus.PASS,
-                    evidence=command_result.stdout,
-                    details="Pytest command returned exit code 0.",
-                )
-            )
-        else:
-            criterion_results.append(
-                CriterionResult(
-                    criterion="Self-test execution",
-                    type=CriterionType.TEST,
-                    status=CriterionStatus.FAIL,
-                    evidence=command_result.stdout + "\n" + command_result.stderr,
-                    details="Pytest command failed.",
-                )
-            )
-            failures.append("Self-test execution failed.")
+        if task_contract.test_scope:
+            self._run_self_test(task_contract, criterion_results, test_results, evidence, failures, workspace=workspace)
 
         changed_files = implementation_result.changed_files or []
         allowed_paths = task_contract.allowed_paths or []
@@ -141,6 +117,42 @@ class DeterministicValidator:
             repair_cycle=0,
             validated_at="",
         )
+
+    def _run_self_test(
+        self,
+        task_contract: Any,
+        criterion_results: list[CriterionResult],
+        test_results: list[str],
+        evidence: list[str],
+        failures: list[str],
+        workspace: Path | None = None,
+    ) -> None:
+        test_command = f"{sys.executable} -m pytest -q"
+        command_result = self._run_command(test_command, workspace=workspace)
+        test_results.append(command_result.stdout)
+        evidence.append(f"test_command={test_command}")
+        evidence.append(f"test_exit_code={command_result.exit_code}")
+        if command_result.exit_code == 0:
+            criterion_results.append(
+                CriterionResult(
+                    criterion="Self-test execution",
+                    type=CriterionType.TEST,
+                    status=CriterionStatus.PASS,
+                    evidence=command_result.stdout,
+                    details="Pytest command returned exit code 0.",
+                )
+            )
+        else:
+            criterion_results.append(
+                CriterionResult(
+                    criterion="Self-test execution",
+                    type=CriterionType.TEST,
+                    status=CriterionStatus.FAIL,
+                    evidence=command_result.stdout + "\n" + command_result.stderr,
+                    details="Pytest command failed.",
+                )
+            )
+            failures.append("Self-test execution failed.")
 
     def _run_command(self, command: str, workspace: Path | None = None) -> _CommandResult:
         try:

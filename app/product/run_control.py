@@ -94,7 +94,7 @@ class RunControl:
                     from app.schemas.implementation import ProjectMap
                     execution_run = executor.run(
                         task_graph,
-                        ProjectMap(architecture="", services=[], modules=[], technology=[], data_flow=""),
+                        ProjectMap(),
                         run_dir=run_dir,
                     )
                     if execution_run.task_results:

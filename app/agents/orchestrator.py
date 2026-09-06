@@ -170,7 +170,7 @@ class ExecutionOrchestrator:
             if self.persistence is not None:
                 self._persist_task_state(run, next_task, started_at)
 
-            deterministic_result = self.validator.validate(next_task.id, contract, execution_result)
+            deterministic_result = self.validator.validate(next_task.id, contract, execution_result, workspace=run_dir)
             validation_result, feedback = self.aggregation.aggregate(contract, execution_result, deterministic_result)
 
             if validation_result.status == ValidationStatus.PASS:
