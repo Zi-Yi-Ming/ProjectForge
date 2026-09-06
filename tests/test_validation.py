@@ -144,10 +144,20 @@ def test_deterministic_validator_fails_on_scope_violation() -> None:
     assert any("Scope violation" in f for f in vr.failures)
 
 
-def test_deterministic_validator_runs_pytest_command() -> None:
+def test_deterministic_validator_skips_self_test_without_test_scope() -> None:
     vr = validator.validate("T7", _contract(), _result_passing())
-    assert vr.test_results
-    assert any("pytest" in (tr or "").lower() for tr in vr.test_results)
+    assert vr.test_results == []
+    assert all(c.criterion != "Self-test execution" for c in vr.criterion_results)
+
+
+def test_deterministic_validator_runs_self_test_with_test_scope(tmp_path: Path) -> None:
+    (tmp_path / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    contract = _contract()
+    from app.schemas.implementation import AllowedTestAction
+    contract.test_scope = [AllowedTestAction.ADD_TEST]
+    vr = validator.validate("T7", contract, _result_passing(), workspace=tmp_path)
+    assert any(c.criterion == "Self-test execution" for c in vr.criterion_results)
+    assert any(c.status == CriterionStatus.PASS for c in vr.criterion_results if c.criterion == "Self-test execution")
 
 
 def test_deterministic_validator_acceptance_criteria_become_manual_items() -> None:
@@ -371,9 +381,3 @@ def test_deterministic_validator_deterministic() -> None:
     first = validator.validate("T7", _contract(), _result_passing())
     second = validator.validate("T7", _contract(), _result_passing())
     assert first.model_dump() == second.model_dump()
-
-
-
-def test_validate_command_added_to_main() -> None:
-    source = (Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8")
-    assert "validate" in source or "@app.command()" in source

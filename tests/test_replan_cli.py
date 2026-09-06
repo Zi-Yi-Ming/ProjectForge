@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from app.agents.persistence import JsonExecutionPersistence
 from app.cli.app import app
+from app.product.project_artifact_store import ProjectArtifactStore
 from app.product.project_persistence import ProjectPersistence
 from app.product.run_control import RunControl
 from app.product.service import ProjectService
@@ -17,8 +19,19 @@ from tests.fakes import FakeExecutor
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _isolated_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # `replan create` loads the task graph via a default ProjectWorkflow whose
+    # artifact store is CWD-relative.
+    monkeypatch.chdir(tmp_path)
+
+
 def _base_dir_option(tmp_path: Path) -> list[str]:
     return ["--base-dir", str(tmp_path)]
+
+
+def _persist_task_graph(project_id: str, task_graph: TaskGraph) -> None:
+    ProjectArtifactStore(base_dir=Path.cwd() / ".runtime" / "projects").save(project_id, "task_graph", task_graph)
 
 
 def _graph_with_failed() -> TaskGraph:
@@ -55,6 +68,7 @@ def test_cli_replan(tmp_path: Path) -> None:
         result = runner.invoke(app, ["transition", project_id, status.value] + _base_dir_option(tmp_path))
         assert result.exit_code == 0
     run = _failed_run(_project_service(tmp_path), project_id, _graph_with_failed(), tmp_path)
+    _persist_task_graph(project_id, _graph_with_failed())
     result = runner.invoke(app, ["replan", "create", project_id, run.run_id] + _base_dir_option(tmp_path))
     assert result.exit_code == 0
     assert "Proposal created" in result.output
@@ -68,6 +82,7 @@ def test_cli_replan_show(tmp_path: Path) -> None:
         result = runner.invoke(app, ["transition", project_id, status.value] + _base_dir_option(tmp_path))
         assert result.exit_code == 0
     run = _failed_run(_project_service(tmp_path), project_id, _graph_with_failed(), tmp_path)
+    _persist_task_graph(project_id, _graph_with_failed())
     result = runner.invoke(app, ["replan", "create", project_id, run.run_id] + _base_dir_option(tmp_path))
     assert result.exit_code == 0
     proposal_id = [line.split(": ", 1)[1] for line in result.output.splitlines() if line.startswith("Proposal ID: ")][0]
@@ -84,6 +99,7 @@ def test_cli_replan_approve(tmp_path: Path) -> None:
         result = runner.invoke(app, ["transition", project_id, status.value] + _base_dir_option(tmp_path))
         assert result.exit_code == 0
     run = _failed_run(_project_service(tmp_path), project_id, _graph_with_failed(), tmp_path)
+    _persist_task_graph(project_id, _graph_with_failed())
     result = runner.invoke(app, ["replan", "create", project_id, run.run_id] + _base_dir_option(tmp_path))
     assert result.exit_code == 0
     proposal_id = [line.split(": ", 1)[1] for line in result.output.splitlines() if line.startswith("Proposal ID: ")][0]
@@ -100,6 +116,7 @@ def test_cli_replan_reject(tmp_path: Path) -> None:
         result = runner.invoke(app, ["transition", project_id, status.value] + _base_dir_option(tmp_path))
         assert result.exit_code == 0
     run = _failed_run(_project_service(tmp_path), project_id, _graph_with_failed(), tmp_path)
+    _persist_task_graph(project_id, _graph_with_failed())
     result = runner.invoke(app, ["replan", "create", project_id, run.run_id] + _base_dir_option(tmp_path))
     assert result.exit_code == 0
     proposal_id = [line.split(": ", 1)[1] for line in result.output.splitlines() if line.startswith("Proposal ID: ")][0]
@@ -115,6 +132,6 @@ def test_cli_run_resume(tmp_path: Path) -> None:
     for status in [ProjectStatus.ANALYZING, ProjectStatus.PLANNING, ProjectStatus.READY]:
         result = runner.invoke(app, ["transition", project_id, status.value] + _base_dir_option(tmp_path))
         assert result.exit_code == 0
-    result = runner.invoke(app, ["run", "resume", project_id] + _base_dir_option(tmp_path))
+    result = runner.invoke(app, ["run", "resume", project_id, "run-missing", "proposal-missing"] + _base_dir_option(tmp_path))
     assert result.exit_code != 0
     assert "Error:" in result.stderr

@@ -28,7 +28,7 @@ def _project_service(tmp_path: Path) -> ProjectService:
     return ProjectService(persistence=persistence, run_control=RunControl())
 
 
-def test_start_run_api(tmp_path: Path) -> None:
+def test_start_run_api_requires_task_graph(tmp_path: Path) -> None:
     service = _project_service(tmp_path)
     project = service.create("run-api")
     service.transition_to(project.project_id, ProjectStatus.ANALYZING)
@@ -36,10 +36,8 @@ def test_start_run_api(tmp_path: Path) -> None:
     service.transition_to(project.project_id, ProjectStatus.READY)
     client = TestClient(create_api(service=service))
     response = client.post(f"/projects/{project.project_id}/runs", json={})
-    assert response.status_code == 201
-    body = response.json()
-    assert body["run"]["project_id"] == project.project_id
-    assert body["run"]["status"] == "RUNNING"
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_PROJECT_STATE"
 
 
 def test_start_run_requires_ready(tmp_path: Path) -> None:

@@ -14,15 +14,80 @@ from app.product.project_persistence import ProjectPersistence
 from app.product.replan_control import ReplanControl
 from app.product.run_control import RunControl
 from app.product.service import ProjectService
-from app.schemas.execution import ExecutionRun, ExecutionStatus
+from app.schemas.execution import ExecutionRun, ExecutionStatus, TaskExecutionRecord
+from app.schemas.implementation import (
+    AgentExecutionResult,
+    ExecutionStatus as ImplExecutionStatus,
+    GitCheckpoint,
+    ScopeStatus,
+)
 from app.schemas.project import ProjectStatus
 from app.schemas.replan import ReplanProposalStatus
 from app.schemas.task import Task, TaskGraph, TaskStatus
+from app.schemas.validation import ValidationResult, ValidationStatus
 
 
 class FakeExecutor:
-    def run(self, task_graph: TaskGraph, run_id: str, run_dir: Path) -> ExecutionRun:
-        raise NotImplementedError
+    def __init__(self, failed: bool = False) -> None:
+        self._failed = failed
+
+    def run(self, task_graph: TaskGraph, project_map=None, run_dir=None) -> ExecutionRun:
+        if not self._failed:
+            return ExecutionRun(
+                run_id="run-fake",
+                project=task_graph.project,
+                status=ExecutionStatus.RUNNING,
+                total_tasks=len(task_graph.tasks),
+                started_at="2026-01-01T00:00:00Z",
+            )
+        failed_task = next(t for t in task_graph.tasks if t.status == TaskStatus.FAILED)
+        return ExecutionRun(
+            run_id="run-fake",
+            project=task_graph.project,
+            status=ExecutionStatus.FAILED,
+            total_tasks=len(task_graph.tasks),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+            failed_tasks=[failed_task.id],
+            task_results=[
+                TaskExecutionRecord(
+                    task_id=failed_task.id,
+                    phase=failed_task.phase_id,
+                    title=failed_task.title,
+                    status="FAILED",
+                    execution_result=AgentExecutionResult(
+                        task_id=failed_task.id,
+                        agent="fake",
+                        status=ImplExecutionStatus.FAILED,
+                        iterations=1,
+                        changed_files=[],
+                        scope_status=ScopeStatus.WITHIN_SCOPE,
+                        test_results=[],
+                        summary="fake failure",
+                        errors=["fake failure"],
+                        blocking_reason="",
+                        git_checkpoint=GitCheckpoint(),
+                    ),
+                    validation_result=ValidationResult(
+                        task_id=failed_task.id,
+                        status=ValidationStatus.FAIL,
+                        criterion_results=[],
+                        test_results=[],
+                        scope_result="WITHIN_SCOPE",
+                        changed_files=[],
+                        evidence=[],
+                        failures=["fake failure"],
+                        warnings=[],
+                        manual_review_items=[],
+                        llm_review=None,
+                        repair_cycle=0,
+                        validated_at="2026-01-01T00:00:00Z",
+                    ),
+                    started_at="2026-01-01T00:00:00Z",
+                    finished_at="2026-01-01T00:00:01Z",
+                )
+            ],
+        )
 
 
 def _graph_with_failed() -> TaskGraph:
@@ -56,9 +121,8 @@ def test_approve_then_apply_proposal(tmp_path: Path) -> None:
     service.transition_to(project.project_id, ProjectStatus.ANALYZING)
     service.transition_to(project.project_id, ProjectStatus.PLANNING)
     service.transition_to(project.project_id, ProjectStatus.READY)
-    run = service.start_run(project.project_id, _graph_with_failed(), tmp_path, FakeExecutor())
-    run.status = ExecutionStatus.FAILED
-    run_control.execution_persistence.save_run(run)
+    run = service.start_run(project.project_id, _graph_with_failed(), tmp_path, FakeExecutor(failed=True))
+    assert run.status == ExecutionStatus.FAILED
     proposal = replan_control.create_proposal(project.project_id, run.run_id, _graph_with_failed())
     assert proposal.status == ReplanProposalStatus.PROPOSED
     approved = replan_control.approve_proposal(project.project_id, run.run_id, proposal.proposal_id)

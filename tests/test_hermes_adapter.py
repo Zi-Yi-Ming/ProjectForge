@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from app.agents.hermes_adapter import HermesAdapter
 from app.schemas.implementation import (
     AgentExecutionResult,
@@ -13,7 +11,10 @@ from app.schemas.implementation import (
     ScopeStatus,
     TaskContract,
 )
+from tests.fakes import requires_hermes
 
+
+pytestmark = requires_hermes
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 

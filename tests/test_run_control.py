@@ -22,21 +22,16 @@ from app.schemas.task import Task, TaskGraph, TaskStatus
 
 class FakeExecutor:
     def __init__(self, run: ExecutionRun | None = None) -> None:
-        self.run = run or ExecutionRun(
+        self._run = run or ExecutionRun(
             run_id="run-fake",
             project="demo",
-            status=ExecutionStatus.COMPLETED,
+            status=ExecutionStatus.RUNNING,
             total_tasks=1,
             started_at="2026-01-01T00:00:00Z",
-            finished_at="2026-01-01T00:01:00Z",
-            completed_tasks=["T1"],
-            failed_tasks=[],
-            blocked_tasks=[],
-            ready_tasks=[],
         )
 
-    def run(self, task_graph: TaskGraph, run_id: str, run_dir: Path) -> ExecutionRun:
-        return self.run
+    def run(self, task_graph: TaskGraph, project_map=None, run_dir=None) -> ExecutionRun:
+        return self._run
 
 
 def _graph() -> TaskGraph:

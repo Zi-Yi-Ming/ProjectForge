@@ -13,6 +13,7 @@ from app.agents.hermes_adapter import HermesAdapter
 from app.agents.jd_analyzer import JDAnalyzer
 from app.agents.matching import ProjectMatcher
 from app.agents.task_engine import TaskEngine
+from tests.fakes import requires_hermes
 from app.schemas.blueprint import ProjectBlueprint, ScopeLevel, UserProfile
 from app.schemas.implementation import (
     AgentExecutionResult,
@@ -426,6 +427,7 @@ def test_mock_adapter_tracks_calls() -> None:
     assert adapter.calls[0][0].task_id == "T1"
 
 
+@requires_hermes
 def test_hermes_adapter_returns_structured_result() -> None:
     adapter = HermesAdapter()
     contract = TaskContract(
@@ -629,9 +631,10 @@ def test_mock_error_result() -> None:
     assert result.status == "ERROR"
 
 
-def test_max_repair_iterations_limits_to_three() -> None:
+@requires_hermes
+def test_max_repair_iterations_limits_to_three(tmp_path: Path) -> None:
     from app.agents.hermes_adapter import HermesAdapter
-    adapter = HermesAdapter()
+    adapter = HermesAdapter(workspace=tmp_path)
     contract = TaskContract(
         task_id="T1",
         project="demo",
@@ -653,15 +656,15 @@ def test_max_repair_iterations_limits_to_three() -> None:
         test_scope=[],
         execution_rules=[],
     )
-    # The current MVP stub does not simulate failures, so we only assert the method runs.
     result = adapter.execute(contract, ProjectMap())
-    assert result.iterations >= 1
+    assert 1 <= result.iterations <= 3
 
 
 # =========================
 # Scope tests
 # =========================
 
+@requires_hermes
 def test_scope_within_scope() -> None:
     adapter = HermesAdapter()
     contract = TaskContract(
@@ -689,6 +692,7 @@ def test_scope_within_scope() -> None:
     assert result.scope_status in {ScopeStatus.WITHIN_SCOPE, ScopeStatus.NEEDS_REVIEW}
 
 
+@requires_hermes
 def test_scope_violation_detected() -> None:
     adapter = HermesAdapter()
     contract = TaskContract(
@@ -717,6 +721,7 @@ def test_scope_violation_detected() -> None:
     assert result.scope_status in {ScopeStatus.WITHIN_SCOPE, ScopeStatus.NEEDS_REVIEW, ScopeStatus.SCOPE_VIOLATION}
 
 
+@requires_hermes
 def test_scope_needs_review_without_allowed_paths() -> None:
     contract = TaskContract(
         task_id="T1",
@@ -925,11 +930,13 @@ def test_blueprint_is_not_auto_modified() -> None:
 # Scope tests
 # =========================
 
+@requires_hermes
 def test_within_scope_path_allowed() -> None:
     adapter = HermesAdapter()
     assert adapter._path_allowed("src/api/TaskController.java", "src/") is True
 
 
+@requires_hermes
 def test_needs_review_path_not_allowed() -> None:
     adapter = HermesAdapter()
     assert adapter._path_allowed("src/api/TaskController.java", "src/worker/") is False

@@ -21,6 +21,7 @@ from app.schemas.implementation import AgentExecutionResult, ExecutionStatus as 
 from app.schemas.project import ProjectStatus
 from app.schemas.task import Task, TaskGraph, TaskStatus
 from app.schemas.validation import ValidationResult, ValidationStatus
+from tests.fakes import requires_hermes
 
 
 def _service(tmp_path: Path) -> ProjectService:
@@ -163,6 +164,7 @@ def test_restart_recovery_execution_state(tmp_path: Path) -> None:
     assert reloaded.status == ProjectStatus.COMPLETED
 
 
+@requires_hermes
 def test_real_hermes_invocation_uses_isolated_workspace(tmp_path: Path) -> None:
     # Hermes v0.20.6 Agent Runtime resolves relative file paths against
     # Path.home(), not subprocess cwd. Therefore we cannot verify filesystem

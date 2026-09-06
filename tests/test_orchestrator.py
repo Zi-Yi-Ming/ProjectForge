@@ -28,7 +28,7 @@ from app.schemas.jd import JDProfile
 from app.schemas.matching import ProjectFit
 from app.schemas.research import GitHubInfo, ResearchOutput
 from app.schemas.scoring import RepositoryScore
-from app.schemas.task import Task, TaskGraph, TaskStatus
+from app.schemas.task import Task, TaskGraph, TaskGraphValidation, TaskStatus
 from app.schemas.validation import ValidationResult, ValidationStatus
 
 
@@ -219,6 +219,25 @@ def test_done_task_is_not_ready_again() -> None:
 # Orchestrator tests
 # =========================
 
+class _PassValidator(DeterministicValidator):
+    def validate(self, task_id, task_contract, implementation_result, workspace=None):
+        return ValidationResult(
+            task_id=task_id,
+            status=ValidationStatus.PASS,
+            criterion_results=[],
+            test_results=[],
+            scope_result="WITHIN_SCOPE",
+            changed_files=[],
+            evidence=[],
+            failures=[],
+            warnings=[],
+            manual_review_items=[],
+            llm_review=None,
+            repair_cycle=0,
+            validated_at="",
+        )
+
+
 class MockAdapter(CodingAgentAdapter):
     def __init__(self, outcomes: dict[str, AgentExecutionResult] | None = None) -> None:
         self.outcomes = outcomes or {}
@@ -247,7 +266,7 @@ class MockAdapter(CodingAgentAdapter):
 def test_orchestrator_completes_linear_task_graph() -> None:
     graph = _linear_graph()
     adapter = MockAdapter()
-    orchestrator = ExecutionOrchestrator(adapter=adapter)
+    orchestrator = ExecutionOrchestrator(adapter=adapter, validator=_PassValidator())
     run = orchestrator.run(graph, ProjectMap())
     assert run.status == ExecutionStatus.COMPLETED
     assert len(run.completed_tasks) == run.total_tasks
@@ -279,7 +298,7 @@ def test_orchestrator_failure_propagates_to_downstream() -> None:
 def test_orchestrator_validated_task_marks_done() -> None:
     graph = _linear_graph()
     adapter = MockAdapter()
-    orchestrator = ExecutionOrchestrator(adapter=adapter)
+    orchestrator = ExecutionOrchestrator(adapter=adapter, validator=_PassValidator())
     run = orchestrator.run(graph, ProjectMap())
     done_ids = {record.task_id for record in run.task_results if record.status == TaskStatus.DONE.value}
     assert done_ids == {t.id for t in graph.tasks}
@@ -288,7 +307,7 @@ def test_orchestrator_validated_task_marks_done() -> None:
 def test_orchestrator_does_not_override_done_task() -> None:
     graph = _linear_graph()
     adapter = MockAdapter()
-    orchestrator = ExecutionOrchestrator(adapter=adapter)
+    orchestrator = ExecutionOrchestrator(adapter=adapter, validator=_PassValidator())
     run = orchestrator.run(graph, ProjectMap())
     assert run.status == ExecutionStatus.COMPLETED
     done_ids = {record.task_id for record in run.task_results if record.status == TaskStatus.DONE.value}
@@ -308,7 +327,7 @@ def test_orchestrator_blocked_when_no_ready_tasks() -> None:
 def test_orchestrator_rejects_invalid_task_graph() -> None:
     graph = _linear_graph()
     adapter = MockAdapter()
-    graph.graph_validation = None
+    graph.graph_validation = TaskGraphValidation(valid=False, cycle_detected=True, cycle_path=["T1", "T2", "T3"])
     orchestrator = ExecutionOrchestrator(adapter=adapter)
     run = orchestrator.run(graph, ProjectMap())
     assert run.status == ExecutionStatus.BLOCKED
@@ -318,7 +337,7 @@ def test_orchestrator_rejects_invalid_task_graph() -> None:
 def test_orchestrator_execution_run_progress() -> None:
     graph = _linear_graph()
     adapter = MockAdapter()
-    orchestrator = ExecutionOrchestrator(adapter=adapter)
+    orchestrator = ExecutionOrchestrator(adapter=adapter, validator=_PassValidator())
     run = orchestrator.run(graph, ProjectMap())
     assert run.total_tasks == len(graph.tasks)
     assert len(run.completed_tasks) + len(run.failed_tasks) + len(run.blocked_tasks) == run.total_tasks
@@ -327,7 +346,7 @@ def test_orchestrator_execution_run_progress() -> None:
 def test_orchestrator_e2e_with_real_task_graph() -> None:
     graph = _make_task_graph()
     adapter = MockAdapter()
-    orchestrator = ExecutionOrchestrator(adapter=adapter)
+    orchestrator = ExecutionOrchestrator(adapter=adapter, validator=_PassValidator())
     run = orchestrator.run(graph, ProjectMap())
     assert run.status == ExecutionStatus.COMPLETED
     assert len(run.completed_tasks) == run.total_tasks
