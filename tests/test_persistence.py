@@ -163,3 +163,29 @@ def test_persisted_execution_version_is_one(tmp_path: Path) -> None:
     path = tmp_path / "runs" / "run-ver" / "execution.json"
     raw = json.loads(path.read_text(encoding="utf-8"))
     assert raw["version"] == 1
+
+
+def test_replan_control_fields_survive_round_trip(tmp_path: Path) -> None:
+    from app.agents.persistence import JsonExecutionPersistence
+
+    persistence = JsonExecutionPersistence(base_dir=tmp_path)
+    run = ExecutionRun(
+        run_id="run-replan-fields",
+        project="demo",
+        status=ExecutionStatus.BLOCKED,
+        total_tasks=1,
+        started_at="2026-01-01T00:00:00Z",
+        blocking_reason="NEEDS_USER_REPLAN_APPROVAL",
+        replan_count=2,
+        active_proposal_id="proposal-T1-abc12345",
+    )
+    persistence.create_run(run)
+    persisted = json.loads(
+        (tmp_path / "runs" / "run-replan-fields" / "execution.json").read_text(encoding="utf-8")
+    )
+    assert persisted["replan_count"] == 2
+    assert persisted["active_proposal_id"] == "proposal-T1-abc12345"
+
+    loaded = persistence.load_run("run-replan-fields")
+    assert loaded.replan_count == 2
+    assert loaded.active_proposal_id == "proposal-T1-abc12345"

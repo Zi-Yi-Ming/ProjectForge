@@ -31,6 +31,8 @@ class JsonExecutionPersistence:
             started_at=execution_run.started_at,
             finished_at=execution_run.finished_at,
             blocking_reason=execution_run.blocking_reason,
+            replan_count=execution_run.replan_count,
+            active_proposal_id=execution_run.active_proposal_id,
             version=1,
             task_records=list(execution_run.task_results),
         )
@@ -57,6 +59,8 @@ class JsonExecutionPersistence:
             started_at=persisted.started_at,
             finished_at=persisted.finished_at,
             blocking_reason=persisted.blocking_reason,
+            replan_count=persisted.replan_count,
+            active_proposal_id=persisted.active_proposal_id,
             task_results=list(persisted.task_records),
         )
 

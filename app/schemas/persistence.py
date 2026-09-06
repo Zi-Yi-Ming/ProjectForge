@@ -41,6 +41,8 @@ class PersistedExecution(BaseModel):
     started_at: str = Field(default="", description="Run start timestamp.")
     finished_at: str = Field(default="", description="Run finish timestamp.")
     blocking_reason: str = Field(default="", description="Reason when blocked.")
+    replan_count: int = Field(default=0, description="Number of replans applied.")
+    active_proposal_id: str = Field(default="", description="Active replan proposal identifier.")
     version: int = Field(default=1, description="Schema version.")
     task_records: list[TaskExecutionRecord] = Field(default_factory=list, description="Per-task execution records.")
     artifacts: list[Artifact] = Field(default_factory=list, description="Execution artifacts.")
