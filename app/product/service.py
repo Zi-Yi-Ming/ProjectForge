@@ -73,6 +73,25 @@ def executor_factory_from_name(executor: str) -> Any:
     raise ValueError(f"Unknown executor: {executor}. Choose from: hermes, mock.")
 
 
+def planner_factory_from_name(planner: str) -> Any:
+    """Map a planner name to a Planner instance ("rule" or "llm")."""
+    if planner == "rule":
+        from app.agents.planner import RuleBasedPlanner
+
+        return RuleBasedPlanner()
+    if planner == "llm":
+        from app.agents.llm_planner import LlmPlanner, resolve_llm_config
+
+        config = resolve_llm_config()
+        if config is None:
+            raise ValueError(
+                "LLM planner is not configured; set PROJECTFORGE_LLM_BASE_URL, "
+                "PROJECTFORGE_LLM_API_KEY and PROJECTFORGE_LLM_MODEL."
+            )
+        return LlmPlanner(rule=RuleBasedPlanner(), config=config)
+    raise ValueError(f"Unknown planner: {planner}. Choose from: rule, llm.")
+
+
 class ProjectService:
     def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None, executor_factory: Any = None, base_dir: Path | None = None) -> None:
         self.base_dir = resolve_base_dir(base_dir)
@@ -203,6 +222,12 @@ class ProjectService:
         user_profile: UserProfile,
         workflow: ProjectWorkflow | None = None,
     ) -> Project:
+        """Deprecated: callers should use :meth:`plan_to_ready` instead.
+
+        Kept for compatibility — it drives the same four-stage pipeline
+        but still requires the caller to supply research/score objects
+        that nothing produces anymore.
+        """
         project = self.load(project_id)
         if project.status != ProjectStatus.CREATED:
             raise InvalidProjectStateError(
@@ -224,6 +249,48 @@ class ProjectService:
         workflow.persist_project_fit(project_id, project_fit)
         bp_ref = workflow.persist_blueprint(project_id, blueprint)
         tg_ref = workflow.persist_task_graph(project_id, task_graph)
+
+        self.update_artifact_ref(project_id, "blueprint", bp_ref)
+        self.update_artifact_ref(project_id, "task_graph", tg_ref)
+
+        self.transition_to(project_id, ProjectStatus.READY)
+        return self.load(project_id)
+
+    def plan_to_ready(
+        self,
+        project_id: str,
+        jd_text: str,
+        user_profile: UserProfile | None = None,
+        planner: Any = None,
+        workflow: ProjectWorkflow | None = None,
+    ) -> Project:
+        """Run the planning pipeline on a CREATED project until READY.
+
+        Uses the injected planner (default: rule-based). The planner is
+        responsible for its own fallback behaviour and never raises.
+        """
+        project = self.load(project_id)
+        if project.status != ProjectStatus.CREATED:
+            raise InvalidProjectStateError(
+                f"Project {project_id} is not CREATED; cannot plan from {project.status}."
+            )
+
+        if planner is None:
+            from app.agents.planner import RuleBasedPlanner
+
+            planner = RuleBasedPlanner()
+        workflow = workflow or ProjectWorkflow(base_dir=self.base_dir)
+
+        self.transition_to(project_id, ProjectStatus.ANALYZING)
+        result = planner.plan(jd_text, user_profile)
+        jd_ref = workflow.persist_jd_profile(project_id, result.jd_profile)
+        self.update_artifact_ref(project_id, "jd_profile", jd_ref)
+
+        self.transition_to(project_id, ProjectStatus.PLANNING)
+        if result.project_fit is not None:
+            workflow.persist_project_fit(project_id, result.project_fit)
+        bp_ref = workflow.persist_blueprint(project_id, result.blueprint)
+        tg_ref = workflow.persist_task_graph(project_id, result.task_graph)
 
         self.update_artifact_ref(project_id, "blueprint", bp_ref)
         self.update_artifact_ref(project_id, "task_graph", tg_ref)

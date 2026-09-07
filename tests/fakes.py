@@ -39,6 +39,23 @@ requires_llm = pytest.mark.skipif(
 )
 
 
+class FakePlanner:
+    """Planner stub returning a canned PlanningResult (default: rule planner output)."""
+
+    def __init__(self, result: Any = None) -> None:
+        from app.agents.planner import RuleBasedPlanner
+
+        self._default = RuleBasedPlanner()
+        self._result = result
+        self.calls: list[str] = []
+
+    def plan(self, jd_text: str, user_profile=None):
+        self.calls.append(jd_text)
+        if self._result is not None:
+            return self._result
+        return self._default.plan(jd_text, user_profile)
+
+
 class FakeExecutor:
     def __init__(self, outcomes: dict[str, AgentExecutionResult] | None = None) -> None:
         self.outcomes = outcomes or {}
