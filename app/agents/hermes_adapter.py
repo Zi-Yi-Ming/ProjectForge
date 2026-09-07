@@ -1,339 +1,34 @@
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-from app.agents.coding_agent import CodingAgentAdapter
-from app.schemas.implementation import (
-    AgentExecutionResult,
-    ExecutionStatus,
-    GitCheckpoint,
-    ProjectMap,
-    ScopeStatus,
-    TaskContract,
-)
+from app.agents.cli_adapter import CliAgentAdapter
+from app.agents.sandbox_policy import BwrapSandboxPolicy
 
 
-@dataclass
-class _CommandResult:
-    command: str
-    exit_code: int
-    stdout: str
-    stderr: str
-
-
-class HermesAdapter(CodingAgentAdapter):
-    def __init__(self, workspace: Path | None = None, timeout_seconds: int = 900) -> None:
-        self.workspace = workspace
-        self.timeout_seconds = timeout_seconds
-        self.hermes_cli = self._find_hermes_cli()
-        self._sandbox_binary = self._detect_sandbox()
-        if self._sandbox_binary is None:
-            raise RuntimeError(
-                "Workspace isolation is required but no sandbox binary is available. "
-                "Install bubblewrap/bwrap to enable Hermes execution."
-            )
-
-    def execute(
+class HermesAdapter(CliAgentAdapter):
+    def __init__(
         self,
-        task_contract: TaskContract,
-        project_map: ProjectMap,
-    ) -> AgentExecutionResult:
-        started_at = self._now()
-        result = self._run(task_contract, project_map)
-        finished_at = self._now()
-        result.started_at = started_at
-        result.finished_at = finished_at
-        result.task_id = task_contract.task_id
-        result.agent = "hermes"
-        return result
-
-    def _run(
-        self,
-        task_contract: TaskContract,
-        project_map: ProjectMap,
-    ) -> AgentExecutionResult:
-        if self.workspace is None or not self.workspace.exists() or not self.workspace.is_dir():
-            return AgentExecutionResult(
-                task_id=task_contract.task_id,
-                agent="hermes",
-                status=ExecutionStatus.ERROR,
-                iterations=0,
-                changed_files=[],
-                scope_status=ScopeStatus.NEEDS_REVIEW,
-                test_results=[],
-                summary="",
-                errors=[f"Workspace not found: {self.workspace}"],
-                blocking_reason="Workspace not found",
-                git_checkpoint=GitCheckpoint(),
-            )
-
-        workspace = self.workspace
-        prompt = self._build_prompt(task_contract, project_map)
-        head_before, pre_existing = self._git_checkpoint_before(workspace)
-
-        max_iterations = 3
-        last_result: AgentExecutionResult | None = None
-        for attempt in range(1, max_iterations + 1):
-            result = self._run_single_attempt(
-                workspace, task_contract, prompt, attempt, head_before, pre_existing
-            )
-            last_result = result
-            if result.status in {
-                ExecutionStatus.IMPLEMENTED,
-                ExecutionStatus.BLOCKED,
-                ExecutionStatus.ERROR,
-                ExecutionStatus.TIMEOUT,
-            }:
-                return result
-            if attempt == max_iterations:
-                result.iterations = attempt
-                result.status = ExecutionStatus.FAILED
-                return result
-        assert last_result is not None
-        return last_result
-
-    def _detect_sandbox(self) -> str | None:
-        for name in ("bwrap", "bubblewrap"):
-            if shutil.which(name):
-                return name
-        return None
-
-    def _build_sandbox_command(self, workspace: Path, hermes_cmd: list[str]) -> list[str]:
-        sandbox = self._sandbox_binary
-        if sandbox is None:
-            raise RuntimeError("Sandbox binary is not available")
-
-        workspace = workspace.resolve()
-        sandbox_cmd = [
-            sandbox,
-            # Keep the host network namespace: hermes must reach the LLM API
-            # (true network isolation would require slirp4netns, as in hermes'
-            # own dev sandbox). On Ubuntu >= 24.04 bwrap also needs an
-            # AppArmor profile permitting unprivileged user namespaces.
-            "--unshare-ipc",
-            "--unshare-pid",
-            "--new-session",
-            "--setenv", "HOME", "/workspace",
-            "--bind", str(workspace), "/workspace",
-            "--ro-bind", "/usr", "/usr",
-            "--ro-bind", "/bin", "/bin",
-            "--ro-bind", "/lib", "/lib",
-            "--ro-bind", "/lib64", "/lib64",
-            "--ro-bind", "/sbin", "/sbin",
-            "--proc", "/proc",
-            "--dev", "/dev",
-            "--chdir", "/workspace",
-        ]
-        for etc_file in ("/etc/resolv.conf", "/etc/hosts"):
-            if Path(etc_file).exists():
-                sandbox_cmd.extend(["--ro-bind", etc_file, etc_file])
-        home = Path.home()
-        for support_dir in (home / ".local", home / ".hermes"):
-            if support_dir.exists():
-                sandbox_cmd.extend(["--ro-bind", str(support_dir), str(support_dir)])
-        hermes_home = home / ".hermes"
-        if hermes_home.exists():
-            # hermes resolves its config/auth relative to HOME, so expose the
-            # real hermes home inside the sandbox at /workspace/.hermes too.
-            sandbox_cmd.extend(["--bind", str(hermes_home), "/workspace/.hermes"])
-        sandbox_cmd.extend(hermes_cmd)
-        return sandbox_cmd
-
-    def _run_single_attempt(
-        self,
-        workspace: Path,
-        task_contract: TaskContract,
-        prompt: str,
-        attempt: int,
-        head_before: str,
-        pre_existing: list[str],
-    ) -> AgentExecutionResult:
-        hermes_cmd = [
-            self.hermes_cli,
-            "-z",
-            prompt,
-            "--in",
-            "/workspace",
-            "--safe-mode",
-            "--accept-hooks",
-            "--ignore-user-config",
-            "--ignore-rules",
-        ]
-
-        try:
-            cmd = self._build_sandbox_command(workspace, hermes_cmd)
-            proc = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=self.timeout_seconds,
-            )
-            stdout = proc.stdout.decode("utf-8", errors="replace")
-            stderr = proc.stderr.decode("utf-8", errors="replace")
-            return_code = proc.returncode
-        except subprocess.TimeoutExpired:
-            return AgentExecutionResult(
-                task_id=task_contract.task_id,
-                agent="hermes",
-                status=ExecutionStatus.TIMEOUT,
-                iterations=attempt,
-                changed_files=[],
-                scope_status=ScopeStatus.NEEDS_REVIEW,
-                test_results=[],
-                summary="",
-                errors=["Hermes execution exceeded timeout"],
-                blocking_reason="Hermes execution exceeded timeout",
-                git_checkpoint=GitCheckpoint(
-                    head_before=head_before,
-                    pre_existing_changes=pre_existing,
-                ),
-            )
-        except Exception as exc:
-            return AgentExecutionResult(
-                task_id=task_contract.task_id,
-                agent="hermes",
-                status=ExecutionStatus.ERROR,
-                iterations=attempt,
-                changed_files=[],
-                scope_status=ScopeStatus.NEEDS_REVIEW,
-                test_results=[],
-                summary="",
-                errors=[str(exc)],
-                blocking_reason=str(exc),
-                git_checkpoint=GitCheckpoint(
-                    head_before=head_before,
-                    pre_existing_changes=pre_existing,
-                ),
-            )
-
-        if return_code != 0:
-            return AgentExecutionResult(
-                task_id=task_contract.task_id,
-                agent="hermes",
-                status=ExecutionStatus.FAILED,
-                iterations=attempt,
-                changed_files=[],
-                scope_status=ScopeStatus.NEEDS_REVIEW,
-                test_results=[],
-                summary=stdout[:500],
-                errors=[stderr[:500]],
-                blocking_reason="",
-                git_checkpoint=GitCheckpoint(
-                    head_before=head_before,
-                    pre_existing_changes=pre_existing,
-                ),
-            )
-
-        changed_files, diff_metadata, head_after = self._git_checkpoint_after(workspace)
-        agent_changes = [f for f in changed_files if f not in pre_existing]
-        scope_status = self._evaluate_scope_from_files(agent_changes, task_contract.allowed_paths)
-
-        return AgentExecutionResult(
-            task_id=task_contract.task_id,
-            agent="hermes",
-            status=ExecutionStatus.IMPLEMENTED,
-            iterations=attempt,
-            changed_files=agent_changes,
-            scope_status=scope_status,
-            test_results=[],
-            summary=stdout[:500],
-            errors=[],
-            blocking_reason="",
-            git_checkpoint=GitCheckpoint(
-                head_before=head_before,
-                head_after=head_after,
-                changed_files=agent_changes,
-                diff_metadata=diff_metadata,
-                pre_existing_changes=pre_existing,
+        workspace: Path | None = None,
+        timeout_seconds: int = 900,
+        sandbox_policy: BwrapSandboxPolicy | None = None,
+    ) -> None:
+        super().__init__(
+            workspace=workspace,
+            timeout_seconds=timeout_seconds,
+            sandbox_policy=sandbox_policy
+            or BwrapSandboxPolicy(
+                cli_home=Path.home() / ".local",
+                config_home=Path.home() / ".hermes",
             ),
         )
+        self.hermes_cli = self.agent_binary
 
-    def _build_prompt(self, task_contract: TaskContract, project_map: ProjectMap) -> str:
-        contract = task_contract
-        parts = [
-            f"You are executing Task {contract.task_id}: {contract.title}",
-            f"Goal: {contract.goal}",
-            f"Why: {contract.why}",
-            "Project Map:",
-            f"- architecture_style: {project_map.architecture_style}",
-            f"- services: {', '.join(project_map.services)}",
-            f"- modules: {', '.join(project_map.modules)}",
-            f"- technology_stack: {', '.join(project_map.technology_stack)}",
-            "Acceptance Criteria:",
-        ]
-        for idx, item in enumerate(contract.acceptance_criteria, start=1):
-            parts.append(f"{idx}. {item}")
-        parts.append("Out of Scope:")
-        for item in contract.out_of_scope:
-            parts.append(f"- {item}")
-        parts.append("Allowed Paths:")
-        for item in contract.allowed_paths:
-            parts.append(f"- {item}")
-        parts.append("Execution Rules:")
-        for item in contract.execution_rules:
-            parts.append(f"- {item}")
-        return "\n".join(parts)
+    def agent_name(self) -> str:
+        return "hermes"
 
-    def _git_checkpoint_before(self, workspace: Path) -> tuple[str, list[str]]:
-        head = self._run_git(["rev-parse", "HEAD"], workspace)
-        status = self._run_git(["status", "--short"], workspace)
-        files = [line.strip() for line in status.stdout.splitlines() if line.strip()]
-        return head.stdout.strip(), files
-
-    def _git_checkpoint_after(self, workspace: Path) -> tuple[list[str], str, str]:
-        head = self._run_git(["rev-parse", "HEAD"], workspace)
-        status = self._run_git(["status", "--short"], workspace)
-        files = [line.strip() for line in status.stdout.splitlines() if line.strip()]
-        diff_stat = self._run_git(["diff", "--stat"], workspace).stdout.strip()
-        return files, diff_stat, head.stdout.strip()
-
-    def _run_git(self, args: list[str], workspace: Path) -> _CommandResult:
-        cmd = ["git"] + args
-        try:
-            proc = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=str(workspace),
-                timeout=30,
-            )
-            return _CommandResult(
-                command=" ".join(cmd),
-                exit_code=proc.returncode,
-                stdout=proc.stdout.decode("utf-8", errors="replace"),
-                stderr=proc.stderr.decode("utf-8", errors="replace"),
-            )
-        except Exception as exc:
-            return _CommandResult(
-                command=" ".join(cmd),
-                exit_code=-1,
-                stdout="",
-                stderr=str(exc),
-            )
-
-    def _evaluate_scope_from_files(self, changed_files: list[str], allowed_paths: list[str]) -> ScopeStatus:
-        if not allowed_paths:
-            return ScopeStatus.NEEDS_REVIEW
-        for changed in changed_files:
-            if not any(self._path_allowed(changed, allowed) for allowed in allowed_paths):
-                return ScopeStatus.SCOPE_VIOLATION
-        return ScopeStatus.WITHIN_SCOPE
-
-    @staticmethod
-    def _path_allowed(changed_path: str, allowed_path: str) -> bool:
-        return changed_path == allowed_path or changed_path.startswith(allowed_path.rstrip("/") + "/")
-
-    @staticmethod
-    def _now() -> str:
-        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-    def _find_hermes_cli(self) -> str:
+    def find_binary(self) -> str:
         for name in ["hermes", "hermes-agent", "hermes_cli"]:
             try:
                 proc = subprocess.run(
@@ -347,3 +42,16 @@ class HermesAdapter(CodingAgentAdapter):
             except FileNotFoundError:
                 continue
         raise RuntimeError("Hermes CLI not found in PATH")
+
+    def build_argv(self, prompt: str) -> list[str]:
+        return [
+            self.agent_binary,
+            "-z",
+            prompt,
+            "--in",
+            "/workspace",
+            "--safe-mode",
+            "--accept-hooks",
+            "--ignore-user-config",
+            "--ignore-rules",
+        ]

@@ -72,7 +72,7 @@ class GitCheckpoint(BaseModel):
 
 class AgentExecutionResult(BaseModel):
     task_id: str = Field(..., description="Executed task identifier.")
-    agent: str = Field(default="hermes", description="Agent name used for execution.")
+    agent: str = Field(..., description="Agent name used for execution.")
     status: ExecutionStatus = Field(..., description="Final execution status.")
     iterations: int = Field(default=0, description="Attempts used, up to 3.")
     changed_files: list[str] = Field(default_factory=list, description="Files changed by agent.")
