@@ -10,3 +10,4 @@ cache/
 logs/
 outputs/
 *.egg-info/
+.coverage
