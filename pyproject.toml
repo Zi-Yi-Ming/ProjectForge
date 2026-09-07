@@ -1,20 +1,21 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "projectforge"
-version = "0.1.2"
-description = "基于岗位 JD 的工程项目教练与约束式执行引擎"
+version = "0.2.0"
+description = "JD-driven project coach and constrained execution engine"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "ProjectForge Contributors" }]
-keywords = ["jd", "project", "execution", "replan", "sandbox"]
+keywords = ["jd", "learning", "coding-agent", "orchestrator", "sandbox", "validation", "replan"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -26,6 +27,12 @@ dependencies = [
     "pydantic==2.13.4",
     "typer==0.27.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Zi-Yi-Ming/ProjectForge"
+Repository = "https://github.com/Zi-Yi-Ming/ProjectForge"
+Issues = "https://github.com/Zi-Yi-Ming/ProjectForge/issues"
+Changelog = "https://github.com/Zi-Yi-Ming/ProjectForge/releases"
 
 [project.scripts]
 projectforge = "app.cli.app:app"

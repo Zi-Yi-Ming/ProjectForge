@@ -309,13 +309,14 @@ ProjectForge 当前不依赖任何环境变量或 `.env` 文件。
 
 ## 项目状态
 
-- Product Core：已实现
-- CLI：stable
-- API：stable
-- Hermes 集成：已接入真实 Hermes CLI，受 bwrap sandbox 约束
-- Workspace isolation：已实现 fail-closed 执行边界
-- Web UI：未实现
-- 多用户 / 云执行：未实现
+- Product Core（JD → 蓝图 → 任务图）：stable，测试覆盖完整
+- CLI / API：stable（Python 3.10–3.12 CI）
+- 约束式执行：**v0.2 起可用**。mock 后端全链路已验证；Hermes 后端在 Linux + bwrap sandbox 内端到端验证（含真实 LLM 调用），见 [docs/demo.md](docs/demo.md)
+- 确定性验证：任务可声明 `test_paths` / `test_command`，验证器真实执行测试；声明的套件通过时任务可达 DONE，否则保持保守 BLOCKED
+- cancel：自 v0.2 起真正中断执行（任务间检查点，取消标志跨进程持久）
+- 沙箱隔离：文件系统 / pid / ipc 隔离，**与宿主共享网络**（真网络隔离需 slirp4netns，未实现）
+- v0.2.0 破坏性变更：`--base-dir` 语义改为运行时根（`projects/`、`runs/`、`workspaces/`）；v0.1.x 自定义布局不自动迁移
+- Web UI / 多用户 / 云执行：未实现
 
 ## License
 

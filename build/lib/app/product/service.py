@@ -1,0 +1,423 @@
+from __future__ import annotations
+
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable
+
+from app.product.errors import (
+    ActiveRunExistsError,
+    CommandNotAllowedError,
+    InvalidProjectStateError,
+    InvalidStateTransitionError,
+    ProjectNotFoundError,
+)
+from app.product.event_store import EventStore, new_event_id
+from app.product.lifecycle import ProjectLifecycle
+from app.product.project_persistence import ProjectPersistence
+from app.product.project_artifact_store import ProjectArtifactStore
+from app.product.run_control import RunControl
+from app.agents.orchestrator import ExecutionOrchestrator
+from app.agents.persistence import JsonExecutionPersistence
+from app.agents.replan_persistence import ReplanPersistence
+from app.product.replan_control import ReplanControl
+from app.product.workflow import ProjectWorkflow
+from app.schemas.blueprint import UserProfile
+from app.schemas.event import Actor, ProductEvent
+from app.schemas.execution import ExecutionRun, ExecutionStatus
+from app.schemas.implementation import ProjectMap
+from app.schemas.project import Project, ProjectStatus
+from app.schemas.research import ResearchOutput
+from app.schemas.scoring import RepositoryScore
+from app.schemas.task import TaskGraph
+from app.schemas.replan import ReplanProposal, ReplanProposalStatus
+
+_ARTIFACT_REF_FIELDS = {
+    "jd_profile": "jd_profile_ref",
+    "blueprint": "blueprint_ref",
+    "task_graph": "task_graph_ref",
+}
+
+
+def resolve_base_dir(base: Path | None = None) -> Path:
+    """Single source of truth for the runtime root.
+
+    Layout under the root: projects/ (project records, events, artifacts),
+    runs/ (execution runs, replan proposals), workspaces/ (executor
+    workspaces). Defaults to $PROJECTFORGE_RUNTIME_DIR or ./.runtime.
+    """
+    if base is not None:
+        return Path(base)
+    env = os.environ.get("PROJECTFORGE_RUNTIME_DIR")
+    if env:
+        return Path(env)
+    return Path.cwd() / ".runtime"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _new_event_id() -> str:
+    return new_event_id()
+
+
+def executor_factory_from_name(executor: str) -> Any:
+    """Map an executor name to a factory building the adapter for a run dir."""
+    if executor == "hermes":
+        return None
+    if executor == "mock":
+        from app.agents.mock_executor import MockExecutor
+
+        return lambda run_dir: MockExecutor(workspace=run_dir)
+    raise ValueError(f"Unknown executor: {executor}. Choose from: hermes, mock.")
+
+
+class ProjectService:
+    def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None, executor_factory: Any = None, base_dir: Path | None = None) -> None:
+        self.base_dir = resolve_base_dir(base_dir)
+        self.persistence = persistence or ProjectPersistence(base_dir=self.base_dir / "projects")
+        self.event_store = event_store or EventStore(base_dir=self.base_dir / "projects")
+        self._active_runs: dict[str, str] = {}
+        self._executor_factory = executor_factory
+        self.run_control = run_control or RunControl(execution_persistence=JsonExecutionPersistence(base_dir=self.base_dir), persistence=self.persistence)
+        self.replan_control = replan_control or ReplanControl(persistence=self.persistence, run_control=self.run_control, execution_persistence=JsonExecutionPersistence(base_dir=self.base_dir), replan_persistence=ReplanPersistence(base_dir=self.base_dir))
+
+    def _build_executor(self, run_dir: Path) -> Any:
+        from app.agents.orchestrator import ExecutionOrchestrator
+
+        if self._executor_factory is not None:
+            adapter = self._executor_factory(run_dir)
+        else:
+            from app.agents.hermes_adapter import HermesAdapter
+
+            adapter = HermesAdapter(workspace=run_dir, timeout_seconds=300)
+        return ExecutionOrchestrator(adapter=adapter)
+
+    def _auto_run_dir(self, project_id: str) -> Path:
+        run_dir = self.base_dir / "workspaces" / project_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return run_dir
+
+    def create(self, name: str) -> Project:
+        project = Project(name=name)
+        project.project_id = f"proj-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
+        project.created_at = _now_iso()
+        project.updated_at = _now_iso()
+        project.current_stage = ProjectStatus.CREATED.value
+        self.persistence.save_project(project)
+        self.event_store.append(
+            ProductEvent(
+                event_id=_new_event_id(),
+                event_type="PROJECT_CREATED",
+                project_id=project.project_id,
+                timestamp=_now_iso(),
+                actor=Actor.SYSTEM,
+                payload={"name": name},
+            )
+        )
+        return project
+
+    def load(self, project_id: str) -> Project:
+        try:
+            return self.persistence.load_project(project_id)
+        except FileNotFoundError as exc:
+            raise ProjectNotFoundError(f"Project {project_id} not found") from exc
+
+    def transition_to(self, project_id: str, target: ProjectStatus) -> Project:
+        project = self.load(project_id)
+        if not ProjectLifecycle.can_transition(project.status, target):
+            raise InvalidStateTransitionError(
+                f"Cannot transition project {project_id} from {project.status} to {target}"
+            )
+        previous = project.status
+        project.status = target
+        project.current_stage = target.value
+        project.updated_at = _now_iso()
+        self.persistence.save_project(project)
+        self.event_store.append(
+            ProductEvent(
+                event_id=_new_event_id(),
+                event_type="PROJECT_STATE_CHANGED",
+                project_id=project_id,
+                timestamp=_now_iso(),
+                actor=Actor.SYSTEM,
+                payload={"from": previous.value, "to": target.value},
+            )
+        )
+        return project
+
+    def can_start_run(self, project_id: str) -> bool:
+        project = self.load(project_id)
+        if project.status != ProjectStatus.READY:
+            return False
+        return self._active_runs.get(project_id) is None
+
+    def register_active_run(self, project_id: str, run_id: str) -> None:
+        project = self.load(project_id)
+        if not self.can_start_run(project_id):
+            raise ActiveRunExistsError(
+                f"Project {project_id} already has an active run: {self._active_runs.get(project_id)}"
+            )
+        self._active_runs[project_id] = run_id
+        project.last_run_id = run_id
+        project.updated_at = _now_iso()
+        self.persistence.save_project(project)
+
+    def complete_run(self, project_id: str) -> None:
+        self._active_runs.pop(project_id, None)
+
+    def start_run(self, project_id: str, task_graph: Any = None, run_dir: Any = None, executor: Any = None) -> Any:
+        project = self.load(project_id)
+        if project.status != ProjectStatus.READY:
+            raise InvalidProjectStateError(f"Project {project_id} is not READY: {project.status}")
+        run = self.run_control.start_run(project, task_graph, run_dir, executor)
+        self.register_active_run(project_id, run.run_id)
+        self.event_store.append(
+            ProductEvent(
+                event_id=_new_event_id(),
+                event_type="RUN_CREATED",
+                project_id=project_id,
+                timestamp=_now_iso(),
+                actor=Actor.SYSTEM,
+                payload={"run_id": run.run_id},
+            )
+        )
+        return run
+
+    def update_artifact_ref(self, project_id: str, artifact_kind: str, artifact_ref: str) -> Project:
+        if artifact_kind not in _ARTIFACT_REF_FIELDS:
+            raise ValueError(f"Unsupported artifact kind: {artifact_kind}")
+        project = self.load(project_id)
+        setattr(project, _ARTIFACT_REF_FIELDS[artifact_kind], artifact_ref)
+        project.updated_at = _now_iso()
+        self.persistence.save_project(project)
+        return project
+
+    def run_workflow_to_ready(
+        self,
+        project_id: str,
+        jd_text: str,
+        research_output: ResearchOutput,
+        repository_score: RepositoryScore,
+        user_profile: UserProfile,
+        workflow: ProjectWorkflow | None = None,
+    ) -> Project:
+        project = self.load(project_id)
+        if project.status != ProjectStatus.CREATED:
+            raise InvalidProjectStateError(
+                f"Project {project_id} is not CREATED; cannot run setup workflow from {project.status}."
+            )
+
+        workflow = workflow or ProjectWorkflow(base_dir=self.base_dir)
+
+        self.transition_to(project_id, ProjectStatus.ANALYZING)
+        jd_profile = workflow.analyze_jd(jd_text)
+        jd_ref = workflow.persist_jd_profile(project_id, jd_profile)
+        self.update_artifact_ref(project_id, "jd_profile", jd_ref)
+
+        self.transition_to(project_id, ProjectStatus.PLANNING)
+        project_fit = workflow.build_match(jd_profile, research_output, repository_score)
+        blueprint = workflow.build_blueprint(jd_profile, research_output, project_fit, repository_score, user_profile)
+        task_graph = workflow.build_task_graph(blueprint)
+
+        workflow.persist_project_fit(project_id, project_fit)
+        bp_ref = workflow.persist_blueprint(project_id, blueprint)
+        tg_ref = workflow.persist_task_graph(project_id, task_graph)
+
+        self.update_artifact_ref(project_id, "blueprint", bp_ref)
+        self.update_artifact_ref(project_id, "task_graph", tg_ref)
+
+        self.transition_to(project_id, ProjectStatus.READY)
+        return self.load(project_id)
+
+    def execute_run(self, project_id: str, run_dir: Any = None, workflow: ProjectWorkflow | None = None) -> Project:
+        project = self.load(project_id)
+        if project.status != ProjectStatus.READY:
+            raise InvalidProjectStateError(f"Project {project_id} is not READY: {project.status}")
+        if not project.task_graph_ref:
+            raise InvalidProjectStateError(f"Project {project_id} does not have a persisted task_graph_ref.")
+
+        task_graph = (workflow or ProjectWorkflow(base_dir=self.base_dir)).load_task_graph(project_id)
+        if task_graph is None:
+            raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
+
+        resolved_run_dir = Path(run_dir) if run_dir is not None else self._auto_run_dir(project_id)
+        try:
+            executor = self._build_executor(resolved_run_dir)
+        except Exception as exc:
+            raise InvalidProjectStateError(f"Failed to initialize executor: {exc}") from exc
+
+        return self.execute_ready_project(project_id, run_dir=resolved_run_dir, adapter=executor, workflow=workflow)
+
+    def apply_replan(
+        self,
+        project_id: str,
+        proposal_id: str,
+        run_id: str,
+        workflow: ProjectWorkflow | None = None,
+    ) -> ReplanProposal:
+        project = self.load(project_id)
+        task_graph = (workflow or ProjectWorkflow(base_dir=self.base_dir)).load_task_graph(project_id)
+        if task_graph is None:
+            raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
+
+        proposal = self.replan_control.apply_proposal(project_id, proposal_id, task_graph, run_id=run_id)
+        if proposal.status != ReplanProposalStatus.APPLIED:
+            raise InvalidProjectStateError(f"Proposal {proposal_id} was not applied.")
+
+        tg_ref = (workflow or ProjectWorkflow(base_dir=self.base_dir)).persist_task_graph(project_id, task_graph)
+        project.task_graph_ref = tg_ref
+        project.updated_at = _now_iso()
+        self.persistence.save_project(project)
+        return proposal
+
+    def resume_project(
+        self,
+        project_id: str,
+        proposal_id: str,
+        run_id: str,
+        run_dir: Any = None,
+        workflow: ProjectWorkflow | None = None,
+    ) -> Project:
+        project = self.load(project_id)
+        if project.status not in {ProjectStatus.FAILED, ProjectStatus.BLOCKED, ProjectStatus.EXECUTING}:
+            raise InvalidProjectStateError(f"Project {project_id} is not in a resumable state: {project.status}")
+
+        proposal = self.replan_control.get_proposal(run_id, proposal_id)
+        if proposal.status != ReplanProposalStatus.APPLIED:
+            raise InvalidProjectStateError("Proposal must be APPLIED for resume.")
+
+        task_graph = (workflow or ProjectWorkflow(base_dir=self.base_dir)).load_task_graph(project_id)
+        if task_graph is None:
+            raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
+
+        return self.execute_replan_run(project_id, run_id, proposal_id, run_dir=run_dir, workflow=workflow)
+
+    def execute_replan_run(
+        self,
+        project_id: str,
+        run_id: str,
+        proposal_id: str,
+        run_dir: Any = None,
+        workflow: ProjectWorkflow | None = None,
+    ) -> Project:
+        project = self.load(project_id)
+        if project.status not in {ProjectStatus.FAILED, ProjectStatus.BLOCKED, ProjectStatus.EXECUTING}:
+            raise InvalidProjectStateError(f"Project {project_id} is not in a resumable state: {project.status}")
+
+        proposal = self.replan_control.get_proposal(run_id, proposal_id)
+        if proposal.status != ReplanProposalStatus.APPLIED:
+            raise InvalidProjectStateError("Proposal must be APPLIED for resume.")
+
+        task_graph = (workflow or ProjectWorkflow(base_dir=self.base_dir)).load_task_graph(project_id)
+        if task_graph is None:
+            raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
+
+        project = self.transition_to(project_id, ProjectStatus.EXECUTING)
+        resolved_run_dir = Path(run_dir) if run_dir is not None else self._auto_run_dir(project_id)
+        try:
+            executor = self._build_executor(resolved_run_dir)
+        except Exception as exc:
+            raise InvalidProjectStateError(f"Failed to initialize executor: {exc}") from exc
+
+        try:
+            run = self.run_control.start_run(project, task_graph=task_graph, run_dir=resolved_run_dir, executor=executor)
+        except Exception:
+            failed_run_id = self.run_control._active_runs.get(project_id)
+            self.run_control._active_runs.pop(project_id, None)
+            self._active_runs.pop(project_id, None)
+            if failed_run_id:
+                project.last_run_id = failed_run_id
+                project.updated_at = _now_iso()
+                self.persistence.save_project(project)
+                try:
+                    self.transition_to(project_id, ProjectStatus.FAILED)
+                except InvalidStateTransitionError:
+                    pass
+            raise
+        self._active_runs[project_id] = run.run_id
+        project.last_run_id = run.run_id
+        project.updated_at = _now_iso()
+        self.persistence.save_project(project)
+        self.event_store.append(
+            ProductEvent(
+                event_id=_new_event_id(),
+                event_type="RUN_CREATED",
+                project_id=project_id,
+                timestamp=_now_iso(),
+                actor=Actor.SYSTEM,
+                payload={"run_id": run.run_id},
+            )
+        )
+        completed = self.run_control.complete_run(project_id, run.run_id, run.status)
+        self._active_runs.pop(project_id, None)
+        if completed.status == ExecutionStatus.COMPLETED:
+            self.transition_to(project_id, ProjectStatus.COMPLETED)
+        elif completed.status == ExecutionStatus.FAILED:
+            self.transition_to(project_id, ProjectStatus.FAILED)
+        else:
+            self.transition_to(project_id, ProjectStatus.BLOCKED)
+        return self.load(project_id)
+
+    def execute_ready_project(
+        self,
+        project_id: str,
+        run_dir: Any = None,
+        adapter: Any = None,
+        workflow: ProjectWorkflow | None = None,
+    ) -> Project:
+        project = self.load(project_id)
+        if project.status != ProjectStatus.READY:
+            raise InvalidProjectStateError(f"Project {project_id} is not READY: {project.status}")
+        if not project.task_graph_ref:
+            raise InvalidProjectStateError(f"Project {project_id} does not have a persisted task_graph_ref.")
+
+        task_graph = (workflow or ProjectWorkflow(base_dir=self.base_dir)).load_task_graph(project_id)
+        if task_graph is None:
+            raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
+
+        project = self.transition_to(project_id, ProjectStatus.EXECUTING)
+        resolved_run_dir = Path(run_dir) if run_dir is not None else None
+        if isinstance(adapter, ExecutionOrchestrator):
+            executor = adapter
+        else:
+            executor = ExecutionOrchestrator(adapter=adapter)
+        try:
+            run = self.run_control.start_run(project, task_graph=task_graph, run_dir=resolved_run_dir, executor=executor)
+        except Exception:
+            failed_run_id = self.run_control._active_runs.get(project_id)
+            self.run_control._active_runs.pop(project_id, None)
+            self._active_runs.pop(project_id, None)
+            if failed_run_id:
+                project.last_run_id = failed_run_id
+                project.updated_at = _now_iso()
+                self.persistence.save_project(project)
+                try:
+                    self.transition_to(project_id, ProjectStatus.FAILED)
+                except InvalidStateTransitionError:
+                    pass
+            raise
+        self._active_runs[project_id] = run.run_id
+        project.last_run_id = run.run_id
+        project.updated_at = _now_iso()
+        self.persistence.save_project(project)
+        self.event_store.append(
+            ProductEvent(
+                event_id=_new_event_id(),
+                event_type="RUN_CREATED",
+                project_id=project_id,
+                timestamp=_now_iso(),
+                actor=Actor.SYSTEM,
+                payload={"run_id": run.run_id},
+            )
+        )
+        completed = self.run_control.complete_run(project_id, run.run_id, run.status)
+        self._active_runs.pop(project_id, None)
+        if completed.status == ExecutionStatus.COMPLETED:
+            self.transition_to(project_id, ProjectStatus.COMPLETED)
+        elif completed.status == ExecutionStatus.FAILED:
+            self.transition_to(project_id, ProjectStatus.FAILED)
+        else:
+            self.transition_to(project_id, ProjectStatus.BLOCKED)
+        return self.load(project_id)
