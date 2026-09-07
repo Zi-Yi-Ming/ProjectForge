@@ -18,6 +18,8 @@ from app.product.project_persistence import ProjectPersistence
 from app.product.project_artifact_store import ProjectArtifactStore
 from app.product.run_control import RunControl
 from app.agents.orchestrator import ExecutionOrchestrator
+from app.agents.persistence import JsonExecutionPersistence
+from app.agents.replan_persistence import ReplanPersistence
 from app.product.replan_control import ReplanControl
 from app.product.workflow import ProjectWorkflow
 from app.schemas.blueprint import UserProfile
@@ -37,11 +39,19 @@ _ARTIFACT_REF_FIELDS = {
 }
 
 
-def _runtime_base_dir() -> Path:
-    base = os.environ.get("PROJECTFORGE_RUNTIME_DIR")
-    if base:
-        return Path(base).resolve()
-    return Path.cwd().resolve() / ".runtime"
+def resolve_base_dir(base: Path | None = None) -> Path:
+    """Single source of truth for the runtime root.
+
+    Layout under the root: projects/ (project records, events, artifacts),
+    runs/ (execution runs, replan proposals), workspaces/ (executor
+    workspaces). Defaults to $PROJECTFORGE_RUNTIME_DIR or ./.runtime.
+    """
+    if base is not None:
+        return Path(base)
+    env = os.environ.get("PROJECTFORGE_RUNTIME_DIR")
+    if env:
+        return Path(env)
+    return Path.cwd() / ".runtime"
 
 
 def _now_iso() -> str:
@@ -64,13 +74,14 @@ def executor_factory_from_name(executor: str) -> Any:
 
 
 class ProjectService:
-    def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None, executor_factory: Any = None) -> None:
-        self.persistence = persistence or ProjectPersistence()
-        self.event_store = event_store or EventStore()
+    def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None, executor_factory: Any = None, base_dir: Path | None = None) -> None:
+        self.base_dir = resolve_base_dir(base_dir)
+        self.persistence = persistence or ProjectPersistence(base_dir=self.base_dir / "projects")
+        self.event_store = event_store or EventStore(base_dir=self.base_dir / "projects")
         self._active_runs: dict[str, str] = {}
         self._executor_factory = executor_factory
-        self.run_control = run_control or RunControl()
-        self.replan_control = replan_control or ReplanControl(persistence=self.persistence, run_control=self.run_control)
+        self.run_control = run_control or RunControl(execution_persistence=JsonExecutionPersistence(base_dir=self.base_dir), persistence=self.persistence)
+        self.replan_control = replan_control or ReplanControl(persistence=self.persistence, run_control=self.run_control, execution_persistence=JsonExecutionPersistence(base_dir=self.base_dir), replan_persistence=ReplanPersistence(base_dir=self.base_dir))
 
     def _build_executor(self, run_dir: Path) -> Any:
         from app.agents.orchestrator import ExecutionOrchestrator
@@ -83,9 +94,10 @@ class ProjectService:
             adapter = HermesAdapter(workspace=run_dir, timeout_seconds=300)
         return ExecutionOrchestrator(adapter=adapter)
 
-    @staticmethod
-    def _auto_run_dir(project_id: str) -> Path:
-        return _runtime_base_dir() / "projects" / project_id / "runs"
+    def _auto_run_dir(self, project_id: str) -> Path:
+        run_dir = self.base_dir / "workspaces" / project_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return run_dir
 
     def create(self, name: str) -> Project:
         project = Project(name=name)
@@ -197,7 +209,7 @@ class ProjectService:
                 f"Project {project_id} is not CREATED; cannot run setup workflow from {project.status}."
             )
 
-        workflow = workflow or ProjectWorkflow()
+        workflow = workflow or ProjectWorkflow(base_dir=self.base_dir)
 
         self.transition_to(project_id, ProjectStatus.ANALYZING)
         jd_profile = workflow.analyze_jd(jd_text)
@@ -226,7 +238,7 @@ class ProjectService:
         if not project.task_graph_ref:
             raise InvalidProjectStateError(f"Project {project_id} does not have a persisted task_graph_ref.")
 
-        task_graph = (workflow or ProjectWorkflow()).load_task_graph(project_id)
+        task_graph = (workflow or ProjectWorkflow(base_dir=self.base_dir)).load_task_graph(project_id)
         if task_graph is None:
             raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
 
@@ -246,7 +258,7 @@ class ProjectService:
         workflow: ProjectWorkflow | None = None,
     ) -> ReplanProposal:
         project = self.load(project_id)
-        task_graph = (workflow or ProjectWorkflow()).load_task_graph(project_id)
+        task_graph = (workflow or ProjectWorkflow(base_dir=self.base_dir)).load_task_graph(project_id)
         if task_graph is None:
             raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
 
@@ -254,7 +266,7 @@ class ProjectService:
         if proposal.status != ReplanProposalStatus.APPLIED:
             raise InvalidProjectStateError(f"Proposal {proposal_id} was not applied.")
 
-        tg_ref = (workflow or ProjectWorkflow()).persist_task_graph(project_id, task_graph)
+        tg_ref = (workflow or ProjectWorkflow(base_dir=self.base_dir)).persist_task_graph(project_id, task_graph)
         project.task_graph_ref = tg_ref
         project.updated_at = _now_iso()
         self.persistence.save_project(project)
@@ -276,7 +288,7 @@ class ProjectService:
         if proposal.status != ReplanProposalStatus.APPLIED:
             raise InvalidProjectStateError("Proposal must be APPLIED for resume.")
 
-        task_graph = (workflow or ProjectWorkflow()).load_task_graph(project_id)
+        task_graph = (workflow or ProjectWorkflow(base_dir=self.base_dir)).load_task_graph(project_id)
         if task_graph is None:
             raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
 
@@ -298,7 +310,7 @@ class ProjectService:
         if proposal.status != ReplanProposalStatus.APPLIED:
             raise InvalidProjectStateError("Proposal must be APPLIED for resume.")
 
-        task_graph = (workflow or ProjectWorkflow()).load_task_graph(project_id)
+        task_graph = (workflow or ProjectWorkflow(base_dir=self.base_dir)).load_task_graph(project_id)
         if task_graph is None:
             raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
 
@@ -361,7 +373,7 @@ class ProjectService:
         if not project.task_graph_ref:
             raise InvalidProjectStateError(f"Project {project_id} does not have a persisted task_graph_ref.")
 
-        task_graph = (workflow or ProjectWorkflow()).load_task_graph(project_id)
+        task_graph = (workflow or ProjectWorkflow(base_dir=self.base_dir)).load_task_graph(project_id)
         if task_graph is None:
             raise InvalidProjectStateError(f"Project {project_id} task graph could not be loaded.")
 

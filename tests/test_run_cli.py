@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
 from app.agents.persistence import JsonExecutionPersistence
@@ -34,13 +33,6 @@ def _transition_ready(tmp_path: Path, project_id: str) -> None:
         assert result.exit_code == 0
 
 
-@pytest.fixture(autouse=True)
-def _isolated_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # `run start` loads the task graph via a default ProjectWorkflow whose
-    # artifact store is CWD-relative.
-    monkeypatch.chdir(tmp_path)
-
-
 @requires_hermes
 def test_cli_run_start(tmp_path: Path) -> None:
     project_id = _create_project(tmp_path)
@@ -60,8 +52,8 @@ def test_cli_run_start(tmp_path: Path) -> None:
         required_tasks=1,
         optional_tasks=0,
     )
-    workflow = ProjectWorkflow()
-    persistence = ProjectPersistence(base_dir=tmp_path)
+    workflow = ProjectWorkflow(base_dir=tmp_path)
+    persistence = ProjectPersistence(base_dir=tmp_path / "projects")
     project = persistence.load_project(project_id)
     project.task_graph_ref = workflow.persist_task_graph(project_id, task_graph)
     persistence.save_project(project)

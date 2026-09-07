@@ -210,7 +210,7 @@ def create_api(service: ProjectService | None = None, executor: str = "hermes") 
     @api.post("/projects/{project_id}/runs/{run_id}/replan")
     def create_replan(project_id: str, run_id: str) -> JSONResponse:
         try:
-            task_graph = ProjectWorkflow().load_task_graph(project_id)
+            task_graph = ProjectWorkflow(base_dir=service.base_dir).load_task_graph(project_id)
             if task_graph is None:
                 raise InvalidProjectStateError("Task graph could not be loaded.")
             proposal = service.replan_control.create_proposal(project_id, run_id, task_graph)

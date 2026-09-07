@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from app.agents.blueprint import BlueprintAgent
@@ -27,12 +28,13 @@ class ProjectWorkflow:
         blueprint_agent: BlueprintAgent | None = None,
         task_engine: TaskEngine | None = None,
         artifact_store: ProjectArtifactStore | None = None,
+        base_dir: Path | None = None,
     ) -> None:
         self.jd_analyzer = jd_analyzer or JDAnalyzer()
         self.matcher = matcher or ProjectMatcher()
         self.blueprint_agent = blueprint_agent or BlueprintAgent()
         self.task_engine = task_engine or TaskEngine()
-        self.artifact_store = artifact_store or ProjectArtifactStore()
+        self.artifact_store = artifact_store or ProjectArtifactStore(base_dir=(base_dir or Path(".runtime")) / "projects")
 
     def analyze_jd(self, jd_text: str) -> JDProfile:
         if not isinstance(jd_text, str) or not jd_text.strip():

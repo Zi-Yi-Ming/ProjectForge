@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from app.agents.persistence import JsonExecutionPersistence
 from app.agents.replan_persistence import ReplanPersistence
@@ -19,13 +18,6 @@ from fastapi.testclient import TestClient
 from tests.fakes import FakeExecutor, requires_hermes
 
 
-@pytest.fixture(autouse=True)
-def _isolated_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Replan/resume routes load and persist the task graph via a default
-    # ProjectWorkflow whose artifact store is CWD-relative.
-    monkeypatch.chdir(tmp_path)
-
-
 def _graph_with_failed() -> TaskGraph:
     tasks = [
         Task(id="T1", phase_id="P1", title="T1", goal="g1", why="w1", dependencies=[], status=TaskStatus.DONE, scope="Core", acceptance_criteria=[], out_of_scope=[], interview_points=[]),
@@ -34,8 +26,8 @@ def _graph_with_failed() -> TaskGraph:
     return TaskGraph(project="demo", tasks=tasks, total_tasks=2, required_tasks=2, optional_tasks=0)
 
 
-def _persist_task_graph(project_id: str, task_graph: TaskGraph) -> None:
-    ProjectArtifactStore(base_dir=Path.cwd() / ".runtime" / "projects").save(project_id, "task_graph", task_graph)
+def _persist_task_graph(tmp_path: Path, project_id: str, task_graph: TaskGraph) -> None:
+    ProjectArtifactStore(base_dir=tmp_path / "projects").save(project_id, "task_graph", task_graph)
 
 
 def _project_service(tmp_path: Path) -> ProjectService:
@@ -47,7 +39,7 @@ def _project_service(tmp_path: Path) -> ProjectService:
         replan_persistence=ReplanPersistence(base_dir=tmp_path),
         execution_persistence=JsonExecutionPersistence(base_dir=tmp_path),
     )
-    return ProjectService(persistence=persistence, run_control=run_control, replan_control=replan_control)
+    return ProjectService(persistence=persistence, run_control=run_control, replan_control=replan_control, base_dir=tmp_path)
 
 
 def _failed_run(service: ProjectService, project_id: str, task_graph: TaskGraph, run_dir: Path):
@@ -68,7 +60,7 @@ def test_create_replan_api(tmp_path: Path) -> None:
     service.transition_to(project.project_id, ProjectStatus.PLANNING)
     service.transition_to(project.project_id, ProjectStatus.READY)
     run = _failed_run(service, project.project_id, _graph_with_failed(), tmp_path)
-    _persist_task_graph(project.project_id, _graph_with_failed())
+    _persist_task_graph(tmp_path, project.project_id, _graph_with_failed())
     client = TestClient(create_api(service=service))
     response = client.post(f"/projects/{project.project_id}/runs/{run.run_id}/replan", json={})
     assert response.status_code == 200
@@ -82,7 +74,7 @@ def test_get_replan_api(tmp_path: Path) -> None:
     service.transition_to(project.project_id, ProjectStatus.PLANNING)
     service.transition_to(project.project_id, ProjectStatus.READY)
     run = _failed_run(service, project.project_id, _graph_with_failed(), tmp_path)
-    _persist_task_graph(project.project_id, _graph_with_failed())
+    _persist_task_graph(tmp_path, project.project_id, _graph_with_failed())
     client = TestClient(create_api(service=service))
     response = client.post(f"/projects/{project.project_id}/runs/{run.run_id}/replan", json={})
     assert response.status_code == 200
@@ -99,7 +91,7 @@ def test_approve_replan_api(tmp_path: Path) -> None:
     service.transition_to(project.project_id, ProjectStatus.PLANNING)
     service.transition_to(project.project_id, ProjectStatus.READY)
     run = _failed_run(service, project.project_id, _graph_with_failed(), tmp_path)
-    _persist_task_graph(project.project_id, _graph_with_failed())
+    _persist_task_graph(tmp_path, project.project_id, _graph_with_failed())
     client = TestClient(create_api(service=service))
     response = client.post(f"/projects/{project.project_id}/runs/{run.run_id}/replan", json={})
     assert response.status_code == 200
@@ -116,7 +108,7 @@ def test_reject_replan_api(tmp_path: Path) -> None:
     service.transition_to(project.project_id, ProjectStatus.PLANNING)
     service.transition_to(project.project_id, ProjectStatus.READY)
     run = _failed_run(service, project.project_id, _graph_with_failed(), tmp_path)
-    _persist_task_graph(project.project_id, _graph_with_failed())
+    _persist_task_graph(tmp_path, project.project_id, _graph_with_failed())
     client = TestClient(create_api(service=service))
     response = client.post(f"/projects/{project.project_id}/runs/{run.run_id}/replan", json={})
     assert response.status_code == 200
@@ -133,7 +125,7 @@ def test_apply_replan_api(tmp_path: Path) -> None:
     service.transition_to(project.project_id, ProjectStatus.PLANNING)
     service.transition_to(project.project_id, ProjectStatus.READY)
     run = _failed_run(service, project.project_id, _graph_with_failed(), tmp_path)
-    _persist_task_graph(project.project_id, _graph_with_failed())
+    _persist_task_graph(tmp_path, project.project_id, _graph_with_failed())
     client = TestClient(create_api(service=service))
     response = client.post(f"/projects/{project.project_id}/runs/{run.run_id}/replan", json={})
     assert response.status_code == 200
@@ -152,7 +144,7 @@ def test_resume_api(tmp_path: Path) -> None:
     service.transition_to(project.project_id, ProjectStatus.PLANNING)
     service.transition_to(project.project_id, ProjectStatus.READY)
     run = _failed_run(service, project.project_id, _graph_with_failed(), tmp_path)
-    _persist_task_graph(project.project_id, _graph_with_failed())
+    _persist_task_graph(tmp_path, project.project_id, _graph_with_failed())
     client = TestClient(create_api(service=service))
     response = client.post(f"/projects/{project.project_id}/runs/{run.run_id}/replan", json={})
     assert response.status_code == 200
@@ -178,7 +170,7 @@ def test_resume_api_requires_applied_proposal(tmp_path: Path) -> None:
     service.transition_to(project.project_id, ProjectStatus.PLANNING)
     service.transition_to(project.project_id, ProjectStatus.READY)
     run = _failed_run(service, project.project_id, _graph_with_failed(), tmp_path)
-    _persist_task_graph(project.project_id, _graph_with_failed())
+    _persist_task_graph(tmp_path, project.project_id, _graph_with_failed())
     client = TestClient(create_api(service=service))
     response = client.post(f"/projects/{project.project_id}/runs/{run.run_id}/replan", json={})
     assert response.status_code == 200

@@ -69,8 +69,8 @@ def test_invalid_transition(tmp_path: Path) -> None:
 
 def test_events_command(tmp_path: Path) -> None:
     service = ProjectService(
-        persistence=ProjectPersistence(base_dir=tmp_path),
-        event_store=EventStore(base_dir=tmp_path),
+        persistence=ProjectPersistence(base_dir=tmp_path / "projects"),
+        event_store=EventStore(base_dir=tmp_path / "projects"),
     )
     project = service.create("CLI Event Demo")
     service.transition_to(project.project_id, ProjectStatus.ANALYZING)

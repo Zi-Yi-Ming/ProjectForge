@@ -9,11 +9,11 @@ from app.agents.orchestrator import ExecutionOrchestrator
 from app.agents.persistence import JsonExecutionPersistence
 from app.cli.app import app
 from app.product.event_store import EventStore
-from app.product.project_artifact_store import ProjectArtifactStore
 from app.product.project_persistence import ProjectPersistence
 from app.product.replan_control import ReplanControl
 from app.product.run_control import RunControl
 from app.product.service import ProjectService
+from app.product.workflow import ProjectWorkflow
 from app.schemas.execution import ExecutionStatus
 from app.schemas.project import ProjectStatus
 from app.schemas.replan import ReplanProposalStatus
@@ -103,11 +103,10 @@ def test_cli_run_start_with_mock_executor(tmp_path: Path) -> None:
         required_tasks=1,
         optional_tasks=0,
     )
-    workflow_store = ProjectArtifactStore(base_dir=Path.cwd() / ".runtime" / "projects")
-    workflow_store.save(project_id, "task_graph", graph)
-    persistence = ProjectPersistence(base_dir=tmp_path)
+    workflow = ProjectWorkflow(base_dir=tmp_path)
+    persistence = ProjectPersistence(base_dir=tmp_path / "projects")
     project = persistence.load_project(project_id)
-    project.task_graph_ref = workflow_store.save(project_id, "task_graph", graph)
+    project.task_graph_ref = workflow.persist_task_graph(project_id, graph)
     persistence.save_project(project)
 
     result = runner.invoke(app, ["run", "start", project_id, "--base-dir", str(tmp_path), "--executor", "mock"])

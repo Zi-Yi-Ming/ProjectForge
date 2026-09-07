@@ -6,6 +6,7 @@ from pathlib import Path
 import typer
 
 from app.agents.persistence import JsonExecutionPersistence
+from app.agents.replan_persistence import ReplanPersistence
 from app.product.errors import (
     ActiveRunExistsError,
     CommandNotAllowedError,
@@ -26,16 +27,18 @@ from app.schemas.project import ProjectStatus
 
 
 def _default_base_dir() -> Path:
-    return Path(".runtime/projects")
+    return Path(".runtime")
 
 
 def _build_service(base_dir: Path | None = None, executor: str = "hermes") -> ProjectService:
-    persistence = ProjectPersistence(base_dir=base_dir or _default_base_dir())
-    event_store = EventStore(base_dir=base_dir or _default_base_dir())
-    execution_persistence = JsonExecutionPersistence(base_dir=base_dir or _default_base_dir())
+    base = base_dir or _default_base_dir()
+    projects_root = base / "projects"
+    persistence = ProjectPersistence(base_dir=projects_root)
+    event_store = EventStore(base_dir=projects_root)
+    execution_persistence = JsonExecutionPersistence(base_dir=base)
     run_control = RunControl(persistence=persistence, execution_persistence=execution_persistence, event_store=event_store)
-    replan_control = ReplanControl(persistence=persistence, run_control=run_control, event_store=event_store, execution_persistence=execution_persistence)
-    return ProjectService(persistence=persistence, event_store=event_store, run_control=run_control, replan_control=replan_control, executor_factory=_executor_factory(executor))
+    replan_control = ReplanControl(persistence=persistence, run_control=run_control, event_store=event_store, execution_persistence=execution_persistence, replan_persistence=ReplanPersistence(base_dir=base))
+    return ProjectService(persistence=persistence, event_store=event_store, run_control=run_control, replan_control=replan_control, executor_factory=_executor_factory(executor), base_dir=base)
 
 
 def _executor_factory(executor: str):
@@ -150,7 +153,7 @@ app.add_typer(replan_app, name="replan", help="管理项目重新规划")
 def replan_create(project_id: str, run_id: str, base_dir: Path | None = typer.Option(None, "--base-dir")) -> None:
     service = _build_service(base_dir)
     try:
-        workflow = ProjectWorkflow()
+        workflow = ProjectWorkflow(base_dir=base_dir or _default_base_dir())
         task_graph = workflow.load_task_graph(project_id)
     except ProjectNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -287,10 +290,10 @@ app.add_typer(run_app, name="run", help="管理项目执行运行")
 
 
 @run_app.command("start")
-def run_start(project_id: str, base_dir: Path | None = typer.Option(None, "--base-dir"), executor: str = typer.Option("hermes", "--executor", help="Executor backend: hermes (sandboxed CLI agent) or mock (offline).")) -> None:
+def run_start(project_id: str, base_dir: Path | None = typer.Option(None, "--base-dir"), run_dir: Path | None = typer.Option(None, "--run-dir", help="Executor workspace directory (defaults to <base-dir>/workspaces/<project>)."), executor: str = typer.Option("hermes", "--executor", help="Executor backend: hermes (sandboxed CLI agent) or mock (offline).")) -> None:
     service = _build_service(base_dir, executor=executor)
     try:
-        result = service.execute_run(project_id, run_dir=base_dir or _default_base_dir())
+        result = service.execute_run(project_id, run_dir=run_dir)
     except ProjectNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -345,10 +348,10 @@ def run_cancel(project_id: str, run_id: str, base_dir: Path | None = typer.Optio
 
 
 @run_app.command("resume")
-def run_resume(project_id: str, run_id: str, proposal_id: str, base_dir: Path | None = typer.Option(None, "--base-dir"), executor: str = typer.Option("hermes", "--executor", help="Executor backend: hermes (sandboxed CLI agent) or mock (offline).")) -> None:
+def run_resume(project_id: str, run_id: str, proposal_id: str, base_dir: Path | None = typer.Option(None, "--base-dir"), run_dir: Path | None = typer.Option(None, "--run-dir", help="Executor workspace directory (defaults to <base-dir>/workspaces/<project>)."), executor: str = typer.Option("hermes", "--executor", help="Executor backend: hermes (sandboxed CLI agent) or mock (offline).")) -> None:
     service = _build_service(base_dir, executor=executor)
     try:
-        result = service.resume_project(project_id, proposal_id, run_id, run_dir=base_dir or _default_base_dir())
+        result = service.resume_project(project_id, proposal_id, run_id, run_dir=run_dir)
     except ProjectNotFoundError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
