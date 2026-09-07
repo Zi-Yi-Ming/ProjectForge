@@ -86,47 +86,59 @@ class RunControl:
             if self._on_run_started is not None:
                 self._on_run_started(run)
 
-            # Minimal bridge to execution engine.
-            # Executor is expected to be ExecutionOrchestrator or compatible.
-            # It may create its own run; we merge results into the Product Core run.
-            if executor is not None and task_graph is not None:
-                try:
-                    from app.schemas.implementation import ProjectMap
-                    execution_run = executor.run(
-                        task_graph,
-                        ProjectMap(),
-                        run_dir=run_dir,
-                    )
-                    if execution_run.task_results:
-                        run.task_results = execution_run.task_results
-                    if execution_run.status in {ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.BLOCKED}:
-                        run.status = execution_run.status
-                        run.finished_at = execution_run.finished_at
-                        run.completed_tasks = execution_run.completed_tasks
-                        run.failed_tasks = execution_run.failed_tasks
-                        run.blocked_tasks = execution_run.blocked_tasks
-                        self.execution_persistence.create_run(run)
-                        if run.status == ExecutionStatus.COMPLETED:
-                            self._event("RUN_COMPLETED", project_id, run_id)
-                        elif run.status == ExecutionStatus.FAILED:
-                            self._event("RUN_FAILED", project_id, run_id)
-                        elif run.status == ExecutionStatus.BLOCKED:
-                            self._event("RUN_BLOCKED", project_id, run_id)
-                except Exception as exc:
-                    run.status = ExecutionStatus.FAILED
-                    run.finished_at = self._now()
-                    run.failed_tasks = [run.current_task_id] if run.current_task_id else []
-                    run.blocking_reason = str(exc)
+        # Execute outside the lock so cancel_run can run concurrently.
+        if executor is not None and task_graph is not None:
+            try:
+                from app.schemas.implementation import ProjectMap
+                execution_run = executor.run(
+                    task_graph,
+                    ProjectMap(),
+                    run_dir=run_dir,
+                    run_id=run_id,
+                    cancel_check=lambda: self._cancel_pending(run_id),
+                )
+                if execution_run.task_results:
+                    run.task_results = execution_run.task_results
+                run.cancel_requested = execution_run.cancel_requested
+                if execution_run.status in {ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.BLOCKED}:
+                    run.status = execution_run.status
+                    run.finished_at = execution_run.finished_at
+                    run.completed_tasks = execution_run.completed_tasks
+                    run.failed_tasks = execution_run.failed_tasks
+                    run.blocked_tasks = execution_run.blocked_tasks
+                    run.blocking_reason = execution_run.blocking_reason
                     self.execution_persistence.create_run(run)
-                    self._event("RUN_FAILED", project_id, run_id, {"blocking_reason": str(exc)})
-                    raise
+                    if run.status == ExecutionStatus.COMPLETED:
+                        self._event("RUN_COMPLETED", project_id, run_id)
+                    elif run.status == ExecutionStatus.FAILED:
+                        self._event("RUN_FAILED", project_id, run_id)
+                    elif run.status == ExecutionStatus.BLOCKED:
+                        self._event("RUN_BLOCKED", project_id, run_id)
+            except Exception as exc:
+                run.status = ExecutionStatus.FAILED
+                run.finished_at = self._now()
+                run.failed_tasks = [run.current_task_id] if run.current_task_id else []
+                run.blocking_reason = str(exc)
+                self.execution_persistence.create_run(run)
+                self._event("RUN_FAILED", project_id, run_id, {"blocking_reason": str(exc)})
+                raise
 
-            return run
+        return run
+
+    def _cancel_pending(self, run_id: str) -> bool:
+        if run_id in self._cancellations:
+            return True
+        try:
+            return self.execution_persistence.load_run(run_id).cancel_requested
+        except (FileNotFoundError, OSError):
+            return False
 
     def complete_run(self, project_id: str, run_id: str, status: ExecutionStatus = ExecutionStatus.COMPLETED) -> ExecutionRun:
         run = self.execution_persistence.load_run(run_id)
         was_terminal = run.status in {ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.BLOCKED}
-        if run.status != status:
+        if run.status != status and not was_terminal:
+            # A terminal state (including CANCELLED/BLOCKED from cancel_run)
+            # must not be overwritten by a later bookkeeping call.
             run.status = status
             run.finished_at = self._now()
             self.execution_persistence.create_run(run)

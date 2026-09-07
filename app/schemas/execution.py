@@ -45,3 +45,4 @@ class ExecutionRun(BaseModel):
     blocking_reason: str = Field(default="", description="Reason when blocked.")
     replan_count: int = Field(default=0, description="Number of replans applied.")
     active_proposal_id: str = Field(default="", description="Active replan proposal identifier.")
+    cancel_requested: bool = Field(default=False, description="Cancellation requested for this run.")

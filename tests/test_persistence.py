@@ -189,3 +189,27 @@ def test_replan_control_fields_survive_round_trip(tmp_path: Path) -> None:
     loaded = persistence.load_run("run-replan-fields")
     assert loaded.replan_count == 2
     assert loaded.active_proposal_id == "proposal-T1-abc12345"
+
+
+def test_cancel_requested_is_sticky_across_overwrites(tmp_path: Path) -> None:
+    from app.agents.persistence import JsonExecutionPersistence
+
+    persistence = JsonExecutionPersistence(base_dir=tmp_path)
+    run = ExecutionRun(
+        run_id="run-sticky-cancel",
+        project="demo",
+        status=ExecutionStatus.RUNNING,
+        total_tasks=2,
+        started_at="2026-01-01T00:00:00Z",
+    )
+    persistence.create_run(run)
+
+    # Another process cancels: the flag is persisted...
+    loaded = persistence.load_run("run-sticky-cancel")
+    loaded.cancel_requested = True
+    persistence.create_run(loaded)
+
+    # ...then the running executor overwrites with its own unsynced copy.
+    run.current_task_id = "T2"
+    persistence.create_run(run)
+    assert persistence.load_run("run-sticky-cancel").cancel_requested is True

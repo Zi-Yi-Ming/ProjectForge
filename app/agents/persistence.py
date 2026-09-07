@@ -18,6 +18,15 @@ class JsonExecutionPersistence:
 
     def create_run(self, execution_run: ExecutionRun) -> PersistedExecution:
         self.runs_dir.mkdir(parents=True, exist_ok=True)
+        path = self.runs_dir / execution_run.run_id / "execution.json"
+        cancel_requested = execution_run.cancel_requested
+        if not cancel_requested and path.exists():
+            # Cancellation is sticky: a full-file overwrite from the running
+            # executor must not erase a cancel requested by another process.
+            try:
+                cancel_requested = bool(json.loads(path.read_text(encoding="utf-8")).get("cancel_requested"))
+            except (json.JSONDecodeError, OSError):
+                pass
         persisted = PersistedExecution(
             run_id=execution_run.run_id,
             project=execution_run.project,
@@ -33,10 +42,11 @@ class JsonExecutionPersistence:
             blocking_reason=execution_run.blocking_reason,
             replan_count=execution_run.replan_count,
             active_proposal_id=execution_run.active_proposal_id,
+            cancel_requested=cancel_requested,
             version=1,
             task_records=list(execution_run.task_results),
         )
-        self._write_json(self.runs_dir / execution_run.run_id / "execution.json", persisted.model_dump())
+        self._write_json(path, persisted.model_dump())
         return persisted
 
     def save_run(self, execution_run: ExecutionRun) -> PersistedExecution:
@@ -61,6 +71,7 @@ class JsonExecutionPersistence:
             blocking_reason=persisted.blocking_reason,
             replan_count=persisted.replan_count,
             active_proposal_id=persisted.active_proposal_id,
+            cancel_requested=persisted.cancel_requested,
             task_results=list(persisted.task_records),
         )
 

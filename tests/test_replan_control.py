@@ -31,7 +31,7 @@ class FakeExecutor:
     def __init__(self, failed: bool = False) -> None:
         self._failed = failed
 
-    def run(self, task_graph: TaskGraph, project_map=None, run_dir=None) -> ExecutionRun:
+    def run(self, task_graph: TaskGraph, project_map=None, run_dir=None, run_id=None, cancel_check=None) -> ExecutionRun:
         if not self._failed:
             return ExecutionRun(
                 run_id="run-fake",

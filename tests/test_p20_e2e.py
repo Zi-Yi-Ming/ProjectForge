@@ -32,7 +32,7 @@ def _now_iso() -> str:
 
 
 class _RunningExecutor:
-    def run(self, task_graph: TaskGraph, project_map: ProjectMap | None = None, run_dir: Path | None = None) -> ExecutionRun:
+    def run(self, task_graph: TaskGraph, project_map: ProjectMap | None = None, run_dir: Path | None = None, run_id: str | None = None, cancel_check: "Callable[[], bool] | None" = None) -> ExecutionRun:
         return ExecutionRun(
             run_id="run-fake",
             project=task_graph.project,
@@ -43,7 +43,7 @@ class _RunningExecutor:
 
 
 class _FailedRunExecutor:
-    def run(self, task_graph: TaskGraph, project_map: ProjectMap | None = None, run_dir: Path | None = None) -> ExecutionRun:
+    def run(self, task_graph: TaskGraph, project_map: ProjectMap | None = None, run_dir: Path | None = None, run_id: str | None = None, cancel_check: "Callable[[], bool] | None" = None) -> ExecutionRun:
         failed_task = next(t for t in task_graph.tasks if t.status == TaskStatus.FAILED)
         failed_result = AgentExecutionResult(
             task_id=failed_task.id,

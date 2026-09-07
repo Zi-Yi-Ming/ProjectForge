@@ -31,7 +31,7 @@ class _ExecutionFailureExecutor:
     def __init__(self, with_execution_result: bool) -> None:
         self._with_execution_result = with_execution_result
 
-    def run(self, task_graph: TaskGraph, project_map=None, run_dir=None) -> ExecutionRun:
+    def run(self, task_graph: TaskGraph, project_map=None, run_dir=None, run_id=None, cancel_check=None) -> ExecutionRun:
         failed_task = next(t for t in task_graph.tasks if t.status == TaskStatus.FAILED)
         execution_result = None
         if self._with_execution_result:

@@ -38,7 +38,7 @@ class FakeExecutor:
         self.outcomes = outcomes or {}
         self.cancelled = False
 
-    def run(self, task_graph: TaskGraph, project_map: ProjectMap | None = None, run_dir: Path | None = None) -> ExecutionRun:
+    def run(self, task_graph: TaskGraph, project_map: ProjectMap | None = None, run_dir: Path | None = None, run_id: str | None = None, cancel_check: "Callable[[], bool] | None" = None) -> ExecutionRun:
         self.cancelled = False
         run = ExecutionRun(
             run_id=f"run-fake-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",

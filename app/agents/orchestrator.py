@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from app.agents.artifact_store import ArtifactStore
 from app.agents.coding_agent import CodingAgentAdapter
@@ -47,9 +47,16 @@ class ExecutionOrchestrator:
         self.replan_persistence = replan_persistence
         self.replan_applier = replan_applier
 
-    def run(self, task_graph: TaskGraph, project_map: ProjectMap, run_dir: Path | None = None) -> ExecutionRun:
+    def run(
+        self,
+        task_graph: TaskGraph,
+        project_map: ProjectMap,
+        run_dir: Path | None = None,
+        run_id: str | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> ExecutionRun:
         run = ExecutionRun(
-            run_id=self._run_id(task_graph),
+            run_id=run_id or self._run_id(task_graph),
             project=task_graph.project,
             status=ExecutionStatus.RUNNING,
             total_tasks=len(task_graph.tasks),
@@ -70,6 +77,20 @@ class ExecutionOrchestrator:
         self.scheduler.update_states(task_graph)
 
         while True:
+            if cancel_check is not None and cancel_check():
+                run.cancel_requested = True
+                run.status = ExecutionStatus.BLOCKED
+                run.blocking_reason = "CANCELLED"
+                for task in task_graph.tasks:
+                    if task.status not in {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.BLOCKED}:
+                        task.status = TaskStatus.BLOCKED
+                run.blocked_tasks = [t.id for t in task_graph.tasks if t.status == TaskStatus.BLOCKED]
+                run.current_task_id = ""
+                run.finished_at = self._now()
+                if self.persistence is not None:
+                    self.persistence.save_run(run)
+                return run
+
             ready = self.scheduler.get_ready_tasks(task_graph)
             run.ready_tasks = [t.id for t in ready]
             run.completed_tasks = [t.id for t in task_graph.tasks if t.status == TaskStatus.DONE]
