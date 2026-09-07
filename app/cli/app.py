@@ -21,7 +21,7 @@ from app.product.lifecycle import ProjectLifecycle
 from app.product.project_persistence import ProjectPersistence
 from app.product.replan_control import ReplanControl
 from app.product.run_control import RunControl
-from app.product.service import ProjectService, executor_factory_from_name
+from app.product.service import ProjectService, executor_factory_from_name, planner_factory_from_name
 from app.product.workflow import ProjectWorkflow
 from app.schemas.project import ProjectStatus
 
@@ -48,6 +48,13 @@ def _executor_factory(executor: str):
         raise typer.BadParameter(str(exc)) from exc
 
 
+def _planner_factory(planner: str):
+    try:
+        return planner_factory_from_name(planner)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="ProjectForge 项目管理 CLI")
 
 
@@ -67,6 +74,51 @@ def create(name: str, base_dir: Path | None = typer.Option(None, "--base-dir")) 
     typer.echo(f"Name: {project.name}")
     typer.echo(f"Status: {project.status.value}")
     typer.echo(f"Stage: {project.current_stage}")
+
+
+@app.command()
+def plan(
+    jd_file: Path,
+    planner_name: str = typer.Option("rule", "--planner", help="Planner backend: rule (offline) or llm (OpenAI-compatible API)."),
+    base_dir: Path | None = typer.Option(None, "--base-dir"),
+    json_out: Path | None = typer.Option(None, "--json-out", help="Write the task graph JSON to this file."),
+) -> None:
+    """Plan an interview project from a JD text file: JD -> READY in one step."""
+    try:
+        planner = _planner_factory(planner_name)
+    except typer.BadParameter as exc:
+        if planner_name != "llm":
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+        # The LLM planner degrades to the rule-based one instead of failing.
+        typer.echo(f"Warning: {exc} Falling back to --planner rule.", err=True)
+        planner = _planner_factory("rule")
+
+    try:
+        jd_text = Path(jd_file).read_text(encoding="utf-8")
+    except OSError as exc:
+        typer.echo(f"Error: cannot read JD file: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    service = _build_service(base_dir)
+    project = service.create(Path(jd_file).stem)
+    try:
+        result_project = service.plan_to_ready(project.project_id, jd_text, planner=planner)
+    except (InvalidProjectStateError, PersistenceError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    task_graph = ProjectWorkflow(base_dir=base_dir or _default_base_dir()).load_task_graph(project.project_id)
+    typer.echo(f"Plan completed")
+    typer.echo(f"Project ID: {result_project.project_id}")
+    typer.echo(f"Status: {result_project.status.value}")
+    typer.echo(f"Tasks: {task_graph.total_tasks} (required {task_graph.required_tasks}, optional {task_graph.optional_tasks})")
+    for task in task_graph.tasks:
+        typer.echo(f"  {task.id} | {task.scope} | {task.title} | {task.goal} | criteria x{len(task.acceptance_criteria)}")
+
+    if json_out is not None:
+        Path(json_out).write_text(task_graph.model_dump_json(indent=2), encoding="utf-8")
+        typer.echo(f"Task graph written to {json_out}")
 
 
 @app.command()

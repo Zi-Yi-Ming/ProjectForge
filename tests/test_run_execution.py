@@ -34,8 +34,8 @@ def _ready_project(tmp_path: Path, project_name: str = "Run Ready") -> tuple[Pro
     jd_text = "Java backend engineer. Skills: Java, Spring Boot, MySQL, Redis."
     from app.schemas.research import ResearchOutput
     from app.schemas.scoring import RepositoryScore
-    research = ResearchOutput(summary="Spring Boot sample", github=GitHubInfo(), key_points=[], technical_details=[], interesting_facts=[], use_cases=[], topics=[])
-    score = RepositoryScore(score=50, breakdown={})
+    research = ResearchOutput(summary="Spring Boot sample", github=GitHubInfo())
+    score = RepositoryScore(score=50)
     return service, project.project_id, workflow
 
 
@@ -44,8 +44,8 @@ def test_run_start_does_not_use_dummy_task_graph(tmp_path: Path) -> None:
     service, project_id, workflow = _ready_project(tmp_path)
     from app.schemas.research import ResearchOutput
     from app.schemas.scoring import RepositoryScore
-    research = ResearchOutput(summary="Java project", github=GitHubInfo(), key_points=[], technical_details=[], interesting_facts=[], use_cases=[], topics=[])
-    score = RepositoryScore(score=50, breakdown={})
+    research = ResearchOutput(summary="Java project", github=GitHubInfo())
+    score = RepositoryScore(score=50)
     jd_text = "Java backend. Skills: Java, Spring Boot, MySQL."
     user = UserProfile(basic_skills=[], existing_projects=[], target_role="Java Backend", preferred_stack=[], unavailable_technologies=[], weekly_hours=10)
     service.run_workflow_to_ready(project_id, jd_text, research, score, user, workflow=workflow)
@@ -61,8 +61,8 @@ def test_run_show_reads_real_status(tmp_path: Path) -> None:
     service, project_id, workflow = _ready_project(tmp_path)
     from app.schemas.research import ResearchOutput
     from app.schemas.scoring import RepositoryScore
-    research = ResearchOutput(summary="Java project", github=GitHubInfo(), key_points=[], technical_details=[], interesting_facts=[], use_cases=[], topics=[])
-    score = RepositoryScore(score=50, breakdown={})
+    research = ResearchOutput(summary="Java project", github=GitHubInfo())
+    score = RepositoryScore(score=50)
     jd_text = "Java backend. Skills: Java, Spring Boot, MySQL."
     user = UserProfile(basic_skills=[], existing_projects=[], target_role="Java Backend", preferred_stack=[], unavailable_technologies=[], weekly_hours=10)
     service.run_workflow_to_ready(project_id, jd_text, research, score, user, workflow=workflow)
