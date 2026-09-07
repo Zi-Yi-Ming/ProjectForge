@@ -167,3 +167,59 @@ def test_product_applier_rejects_duplicate_split_ids() -> None:
     result = ProductReplanApplier().apply(proposal, graph)
     assert not result.success
     assert any("Duplicate" in f for f in result.failures)
+
+
+def _result_with_checkpoint(task_id: str, head_before: str, head_after: str, changed: list[str]) -> AgentExecutionResult:
+    return AgentExecutionResult(
+        task_id=task_id,
+        agent="mock",
+        status=ExecutionStatus.IMPLEMENTED,
+        iterations=1,
+        changed_files=changed,
+        scope_status=ScopeStatus.WITHIN_SCOPE,
+        test_results=[],
+        summary="",
+        errors=[],
+        blocking_reason="",
+        git_checkpoint=GitCheckpoint(
+            head_before=head_before,
+            head_after=head_after,
+            changed_files=changed,
+        ),
+    )
+
+
+def test_git_criterion_passes_when_head_advances(tmp_path: Path) -> None:
+    contract = _contract("T1", tmp_path, [], [], [])
+    result = _result_with_checkpoint("T1", "a" * 40, "b" * 40, ["t1_impl.txt"])
+    result_v = _validator().validate("T1", contract, result, workspace=tmp_path)
+    git_criteria = [c for c in result_v.criterion_results if c.type.value == "GIT"]
+    assert len(git_criteria) == 1
+    assert git_criteria[0].status.value == "PASS"
+    assert result_v.status.value == "PASS"
+
+
+def test_git_criterion_fails_on_self_report_mismatch(tmp_path: Path) -> None:
+    contract = _contract("T1", tmp_path, [], [], [])
+    result = _result_with_checkpoint("T1", "a" * 40, "a" * 40, ["t1_impl.txt"])
+    result_v = _validator().validate("T1", contract, result, workspace=tmp_path)
+    git_criteria = [c for c in result_v.criterion_results if c.type.value == "GIT"]
+    assert git_criteria[0].status.value == "FAIL"
+    assert result_v.status.value == "FAIL"
+    assert any("checkpoint" in f for f in result_v.failures)
+
+
+def test_git_criterion_passes_when_no_changes_claimed(tmp_path: Path) -> None:
+    contract = _contract("T1", tmp_path, [], [], [])
+    result = _result_with_checkpoint("T1", "a" * 40, "a" * 40, [])
+    result_v = _validator().validate("T1", contract, result, workspace=tmp_path)
+    git_criteria = [c for c in result_v.criterion_results if c.type.value == "GIT"]
+    assert git_criteria[0].status.value == "PASS"
+    assert result_v.status.value == "PASS"
+
+
+def test_unauditable_workspace_is_warning_only(tmp_path: Path) -> None:
+    contract = _contract("T1", tmp_path, [], [], ["some criterion"])
+    result = _validator().validate("T1", contract, _result("T1", ["t1_impl.txt"]), workspace=tmp_path)
+    assert not [c for c in result.criterion_results if c.type.value == "GIT"]
+    assert any("git" in w.lower() for w in result.warnings)

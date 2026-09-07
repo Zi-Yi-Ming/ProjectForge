@@ -105,6 +105,49 @@ class DeterministicValidator:
             )
             failures.append("Scope violation detected.")
 
+        checkpoint = getattr(implementation_result, "git_checkpoint", None)
+        head_before = (checkpoint.head_before if checkpoint else "") or ""
+        head_after = (checkpoint.head_after if checkpoint else "") or ""
+        git_changed = list(checkpoint.changed_files or []) if checkpoint else []
+        if head_before and head_after:
+            # The workspace is under git: cross-check the executor's
+            # self-reported changes against what git actually saw.
+            if head_before == head_after:
+                if changed_files:
+                    criterion_results.append(
+                        CriterionResult(
+                            criterion="Git checkpoint",
+                            type=CriterionType.GIT,
+                            status=CriterionStatus.FAIL,
+                            evidence=f"claimed={changed_files}",
+                            details="Executor reported changed files but HEAD is unchanged.",
+                        )
+                    )
+                    failures.append("Git checkpoint contradicts reported changes.")
+                else:
+                    criterion_results.append(
+                        CriterionResult(
+                            criterion="Git checkpoint",
+                            type=CriterionType.GIT,
+                            status=CriterionStatus.PASS,
+                            evidence=f"{head_before[:8]}..{head_after[:8]}",
+                            details="No file changes, consistent with the report.",
+                        )
+                    )
+            else:
+                criterion_results.append(
+                    CriterionResult(
+                        criterion="Git checkpoint",
+                        type=CriterionType.GIT,
+                        status=CriterionStatus.PASS,
+                        evidence=f"{head_before[:8]}..{head_after[:8]} changed={len(git_changed)}",
+                        details="Workspace HEAD advanced; changes are auditable in the run artifacts.",
+                    )
+                )
+                evidence.append(f"git_changed_files={git_changed}")
+        elif checkpoint is not None:
+            warnings.append("Workspace is not under git version control; file changes cannot be audited.")
+
         status = ValidationStatus.PASS
         if any(c.status == CriterionStatus.FAIL for c in criterion_results):
             status = ValidationStatus.FAIL

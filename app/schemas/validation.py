@@ -13,6 +13,7 @@ class CriterionType(str, Enum):
     COMMAND = "COMMAND"
     FILE = "FILE"
     PATTERN = "PATTERN"
+    GIT = "GIT"
     LLM_REVIEW = "LLM_REVIEW"
     MANUAL = "MANUAL"
 

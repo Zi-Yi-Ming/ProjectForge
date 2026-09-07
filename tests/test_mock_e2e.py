@@ -139,3 +139,70 @@ def test_cli_run_start_with_mock_executor(tmp_path: Path) -> None:
 def test_cli_rejects_unknown_executor(tmp_path: Path) -> None:
     result = runner.invoke(app, ["run", "start", "proj-x", "--base-dir", str(tmp_path), "--executor", "bogus"])
     assert result.exit_code != 0
+
+
+class GitCapturingMockExecutor(MockExecutor):
+    """MockExecutor that commits per task and reports a REAL git checkpoint,
+    mirroring what the CLI adapters do."""
+
+    def _git(self, args: list[str], check: bool = False):
+        import subprocess
+
+        return subprocess.run(
+            ["git", *args], cwd=str(self.workspace), capture_output=True, timeout=30, check=check
+        )
+
+    def execute(self, task_contract, project_map):
+        head_before = self._git(["rev-parse", "HEAD"]).stdout.strip() if (self.workspace / ".git").exists() else ""
+        result = super().execute(task_contract, project_map)
+        if head_before:
+            try:
+                self._git(["add", "-A"], check=True)
+                self._git(["commit", "-q", "-m", f"task {task_contract.task_id}", "--allow-empty"], check=True)
+            except Exception:
+                pass
+            head_after = self._git(["rev-parse", "HEAD"]).stdout.strip()
+            changed_out = self._git(["diff", "--name-only", f"{head_before}..{head_after}"]).stdout
+            changed = [line.strip() for line in changed_out.splitlines() if line.strip()]
+            from app.schemas.implementation import GitCheckpoint
+
+            result.git_checkpoint = GitCheckpoint(
+                head_before=head_before,
+                head_after=head_after,
+                changed_files=changed,
+                diff_metadata=f"{len(changed)} files",
+            )
+        return result
+
+
+def test_git_baseline_makes_changes_auditable(tmp_path: Path) -> None:
+    """The full auditability chain: orchestrator baselines the workspace,
+    the executor reports a real git checkpoint, validation gains a GIT
+    criterion, and the run still completes."""
+    import subprocess
+
+    service = _service(tmp_path)
+    project_id = _ready_project(service)
+    run_dir = tmp_path / "ws"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    orchestrator = ExecutionOrchestrator(adapter=GitCapturingMockExecutor(workspace=run_dir))
+    run = service.start_run(project_id, _graph(), run_dir, orchestrator)
+    assert run.status == ExecutionStatus.COMPLETED
+    assert (run_dir / ".git").exists()
+
+    record = run.task_results[0]
+    git_criteria = [
+        c
+        for c in (record.validation_result.criterion_results or [])
+        if c.type.value == "GIT"
+    ]
+    assert len(git_criteria) == 1
+    assert git_criteria[0].status.value == "PASS"
+    assert record.execution_result.git_checkpoint.head_before != record.execution_result.git_checkpoint.head_after
+
+    # baseline committed: each task produced its own commit, so final HEAD
+    # is T2's post-task HEAD and differs from T1's baseline
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(run_dir), capture_output=True, timeout=30
+    ).stdout.decode().strip()
+    assert head == record.execution_result.git_checkpoint.head_after or head != record.execution_result.git_checkpoint.head_before

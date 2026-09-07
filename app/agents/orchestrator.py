@@ -66,6 +66,9 @@ class ExecutionOrchestrator:
         if self.persistence is not None and run_dir is not None:
             self.persistence.create_run(run)
 
+        if run_dir is not None:
+            self._ensure_git_baseline(run_dir)
+
         if task_graph.graph_validation is not None and not task_graph.graph_validation.valid:
             run.status = ExecutionStatus.BLOCKED
             run.blocking_reason = "TaskGraph validation failed; cannot execute invalid graph."
@@ -363,6 +366,38 @@ class ExecutionOrchestrator:
         if pending:
             return "no executable task remains; unresolved dependency chain"
         return "execution stopped"
+
+    def _ensure_git_baseline(self, run_dir: Path) -> None:
+        """Make the workspace auditable: when it is not a git repository,
+        initialise one and commit a baseline so adapters can capture real
+        checkpoints. Never raises — a git-less host only loses auditability."""
+        import subprocess
+
+        def _git(args: list[str], check: bool = False) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                ["git", *args],
+                cwd=str(run_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60,
+                check=check,
+            )
+
+        try:
+            inside = _git(["rev-parse", "--is-inside-work-tree"])
+            if inside.returncode != 0 or inside.stdout.strip() != b"true":
+                _git(["init", "-q"], check=True)
+            head = _git(["rev-parse", "HEAD"])
+            if head.returncode == 0:
+                return  # existing repo with commits: leave dirty state untouched
+
+            for key, value in (("user.name", "ProjectForge"), ("user.email", "projectforge@local")):
+                if _git(["config", key]).returncode != 0:
+                    _git(["config", key, value], check=True)
+            _git(["add", "-A"], check=True)
+            _git(["commit", "-q", "-m", "projectforge baseline", "--allow-empty"], check=True)
+        except Exception:
+            return
 
     @staticmethod
     def _now() -> str:

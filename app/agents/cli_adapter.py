@@ -202,7 +202,8 @@ class CliAgentAdapter(CodingAgentAdapter):
                 ),
             )
 
-        changed_files, diff_metadata, head_after = self._git_checkpoint_after(workspace)
+        self._commit_task_changes(workspace, task_contract.task_id)
+        changed_files, diff_metadata, head_after = self._git_checkpoint_after(workspace, head_before)
         agent_changes = [f for f in changed_files if f not in pre_existing]
         scope_status = self._evaluate_scope_from_files(agent_changes, task_contract.allowed_paths)
 
@@ -267,12 +268,31 @@ class CliAgentAdapter(CodingAgentAdapter):
         files = [line.strip() for line in status.stdout.splitlines() if line.strip()]
         return head.stdout.strip(), files
 
-    def _git_checkpoint_after(self, workspace: Path) -> tuple[list[str], str, str]:
-        head = self._run_git(["rev-parse", "HEAD"], workspace)
+    def _commit_task_changes(self, workspace: Path, task_id: str) -> None:
+        """Commit the task's working-tree changes so each task has its own
+        auditable commit (HEAD movement + per-task diff). Best-effort: a
+        git-less workspace simply yields an empty checkpoint."""
+        try:
+            subprocess.run(["git", "add", "-A"], cwd=str(workspace), capture_output=True, timeout=60, check=True)
+            subprocess.run(
+                ["git", "commit", "-q", "-m", f"task {task_id}", "--allow-empty"],
+                cwd=str(workspace), capture_output=True, timeout=60, check=True,
+            )
+        except Exception:
+            pass
+
+    def _git_checkpoint_after(self, workspace: Path, head_before: str = "") -> tuple[list[str], str, str]:
+        head_after = self._run_git(["rev-parse", "HEAD"], workspace).stdout.strip()
+        if head_before and head_after:
+            # Per-task commits make the diff exact: only this task's changes.
+            changed = self._run_git(["diff", "--name-only", f"{head_before}..{head_after}"], workspace).stdout
+            files = [line.strip() for line in changed.splitlines() if line.strip()]
+            diff_stat = self._run_git(["diff", "--stat", f"{head_before}..{head_after}"], workspace).stdout.strip()
+            return files, diff_stat, head_after
         status = self._run_git(["status", "--short"], workspace)
         files = [line.strip() for line in status.stdout.splitlines() if line.strip()]
         diff_stat = self._run_git(["diff", "--stat"], workspace).stdout.strip()
-        return files, diff_stat, head.stdout.strip()
+        return files, diff_stat, head_after
 
     def _run_git(self, args: list[str], workspace: Path) -> _CommandResult:
         cmd = ["git"] + args
