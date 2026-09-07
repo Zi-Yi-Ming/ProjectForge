@@ -63,14 +63,38 @@ def _new_event_id() -> str:
 
 
 def executor_factory_from_name(executor: str) -> Any:
-    """Map an executor name to a factory building the adapter for a run dir."""
+    """Map an executor name to a factory building the adapter for a run dir.
+
+    The factory receives (run_dir, timeout_seconds).
+    """
     if executor == "hermes":
         return None
     if executor == "mock":
         from app.agents.mock_executor import MockExecutor
 
-        return lambda run_dir: MockExecutor(workspace=run_dir)
+        return lambda run_dir, timeout_seconds: MockExecutor(workspace=run_dir, timeout_seconds=timeout_seconds)
     raise ValueError(f"Unknown executor: {executor}. Choose from: hermes, mock.")
+
+
+DEFAULT_TASK_TIMEOUT_SECONDS = 300
+
+
+def resolve_task_timeout(base: int | None = None) -> int:
+    """Per-task executor timeout: explicit value > env > default (300s).
+
+    Worst-case wall time is timeout x retry attempts (currently 3).
+    """
+    if base is not None and base > 0:
+        return base
+    raw = os.environ.get("PROJECTFORGE_TASK_TIMEOUT_SECONDS", "").strip()
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return DEFAULT_TASK_TIMEOUT_SECONDS
 
 
 def planner_factory_from_name(planner: str) -> Any:
@@ -93,8 +117,9 @@ def planner_factory_from_name(planner: str) -> Any:
 
 
 class ProjectService:
-    def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None, executor_factory: Any = None, base_dir: Path | None = None) -> None:
+    def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None, executor_factory: Any = None, base_dir: Path | None = None, task_timeout: int | None = None) -> None:
         self.base_dir = resolve_base_dir(base_dir)
+        self.task_timeout = resolve_task_timeout(task_timeout)
         self.persistence = persistence or ProjectPersistence(base_dir=self.base_dir / "projects")
         self.event_store = event_store or EventStore(base_dir=self.base_dir / "projects")
         self._active_runs: dict[str, str] = {}
@@ -106,11 +131,11 @@ class ProjectService:
         from app.agents.orchestrator import ExecutionOrchestrator
 
         if self._executor_factory is not None:
-            adapter = self._executor_factory(run_dir)
+            adapter = self._executor_factory(run_dir, self.task_timeout)
         else:
             from app.agents.hermes_adapter import HermesAdapter
 
-            adapter = HermesAdapter(workspace=run_dir, timeout_seconds=300)
+            adapter = HermesAdapter(workspace=run_dir, timeout_seconds=self.task_timeout)
         return ExecutionOrchestrator(adapter=adapter)
 
     def _auto_run_dir(self, project_id: str) -> Path:

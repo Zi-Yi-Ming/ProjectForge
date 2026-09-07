@@ -242,6 +242,7 @@ pytest tests/test_project_core.py tests/test_workflow.py tests/test_run_control.
 ## 配置
 
 - `PROJECTFORGE_RUNTIME_DIR`：运行时根目录（默认 `./.runtime`）
+- `PROJECTFORGE_TASK_TIMEOUT_SECONDS`：单任务执行器超时（默认 300 秒；最坏执行时间 = 超时 × 重试次数 3），也可用 `run start/resume --timeout` 覆盖
 - `PROJECTFORGE_LLM_BASE_URL` / `PROJECTFORGE_LLM_API_KEY` / `PROJECTFORGE_LLM_MODEL`：配置任意 OpenAI 兼容厂商后，`plan --planner llm` 可用；不配置则 LLM planner 自动回退规则版
 
 ## 项目状态

@@ -30,7 +30,7 @@ def _default_base_dir() -> Path:
     return Path(".runtime")
 
 
-def _build_service(base_dir: Path | None = None, executor: str = "hermes") -> ProjectService:
+def _build_service(base_dir: Path | None = None, executor: str = "hermes", task_timeout: int | None = None) -> ProjectService:
     base = base_dir or _default_base_dir()
     projects_root = base / "projects"
     persistence = ProjectPersistence(base_dir=projects_root)
@@ -38,7 +38,7 @@ def _build_service(base_dir: Path | None = None, executor: str = "hermes") -> Pr
     execution_persistence = JsonExecutionPersistence(base_dir=base)
     run_control = RunControl(persistence=persistence, execution_persistence=execution_persistence, event_store=event_store)
     replan_control = ReplanControl(persistence=persistence, run_control=run_control, event_store=event_store, execution_persistence=execution_persistence, replan_persistence=ReplanPersistence(base_dir=base))
-    return ProjectService(persistence=persistence, event_store=event_store, run_control=run_control, replan_control=replan_control, executor_factory=_executor_factory(executor), base_dir=base)
+    return ProjectService(persistence=persistence, event_store=event_store, run_control=run_control, replan_control=replan_control, executor_factory=_executor_factory(executor), base_dir=base, task_timeout=task_timeout)
 
 
 def _executor_factory(executor: str):
@@ -342,8 +342,8 @@ app.add_typer(run_app, name="run", help="管理项目执行运行")
 
 
 @run_app.command("start")
-def run_start(project_id: str, base_dir: Path | None = typer.Option(None, "--base-dir"), run_dir: Path | None = typer.Option(None, "--run-dir", help="Executor workspace directory (defaults to <base-dir>/workspaces/<project>)."), executor: str = typer.Option("hermes", "--executor", help="Executor backend: hermes (sandboxed CLI agent) or mock (offline).")) -> None:
-    service = _build_service(base_dir, executor=executor)
+def run_start(project_id: str, base_dir: Path | None = typer.Option(None, "--base-dir"), run_dir: Path | None = typer.Option(None, "--run-dir", help="Executor workspace directory (defaults to <base-dir>/workspaces/<project>)."), executor: str = typer.Option("hermes", "--executor", help="Executor backend: hermes (sandboxed CLI agent) or mock (offline)."), task_timeout: int | None = typer.Option(None, "--timeout", help="Per-task executor timeout in seconds (default 300; env PROJECTFORGE_TASK_TIMEOUT_SECONDS).")) -> None:
+    service = _build_service(base_dir, executor=executor, task_timeout=task_timeout)
     try:
         result = service.execute_run(project_id, run_dir=run_dir)
     except ProjectNotFoundError as exc:
@@ -400,8 +400,8 @@ def run_cancel(project_id: str, run_id: str, base_dir: Path | None = typer.Optio
 
 
 @run_app.command("resume")
-def run_resume(project_id: str, run_id: str, proposal_id: str, base_dir: Path | None = typer.Option(None, "--base-dir"), run_dir: Path | None = typer.Option(None, "--run-dir", help="Executor workspace directory (defaults to <base-dir>/workspaces/<project>)."), executor: str = typer.Option("hermes", "--executor", help="Executor backend: hermes (sandboxed CLI agent) or mock (offline).")) -> None:
-    service = _build_service(base_dir, executor=executor)
+def run_resume(project_id: str, run_id: str, proposal_id: str, base_dir: Path | None = typer.Option(None, "--base-dir"), run_dir: Path | None = typer.Option(None, "--run-dir", help="Executor workspace directory (defaults to <base-dir>/workspaces/<project>)."), executor: str = typer.Option("hermes", "--executor", help="Executor backend: hermes (sandboxed CLI agent) or mock (offline)."), task_timeout: int | None = typer.Option(None, "--timeout", help="Per-task executor timeout in seconds (default 300; env PROJECTFORGE_TASK_TIMEOUT_SECONDS).")) -> None:
+    service = _build_service(base_dir, executor=executor, task_timeout=task_timeout)
     try:
         result = service.resume_project(project_id, proposal_id, run_id, run_dir=run_dir)
     except ProjectNotFoundError as exc:
