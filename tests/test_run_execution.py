@@ -23,25 +23,25 @@ def _base_dir_option(tmp_path: Path) -> list[str]:
     return ["--base-dir", str(tmp_path)]
 
 
-def _ready_project(tmp_path: Path, project_name: str = "Run Ready") -> tuple[ProjectService, str]:
+def _ready_project(tmp_path: Path, project_name: str = "Run Ready") -> tuple[ProjectService, str, ProjectWorkflow]:
     service = ProjectService(
-        persistence=ProjectPersistence(base_dir=tmp_path),
-        event_store=EventStore(base_dir=tmp_path),
+        persistence=ProjectPersistence(base_dir=tmp_path / "projects"),
+        event_store=EventStore(base_dir=tmp_path / "projects"),
+        base_dir=tmp_path,
     )
     project = service.create(project_name)
-    workflow = ProjectWorkflow()
+    workflow = ProjectWorkflow(base_dir=tmp_path)
     jd_text = "Java backend engineer. Skills: Java, Spring Boot, MySQL, Redis."
     from app.schemas.research import ResearchOutput
     from app.schemas.scoring import RepositoryScore
     research = ResearchOutput(summary="Spring Boot sample", github=GitHubInfo(), key_points=[], technical_details=[], interesting_facts=[], use_cases=[], topics=[])
     score = RepositoryScore(score=50, breakdown={})
-    return service, project.project_id
+    return service, project.project_id, workflow
 
 
 @requires_hermes
 def test_run_start_does_not_use_dummy_task_graph(tmp_path: Path) -> None:
-    service, project_id = _ready_project(tmp_path)
-    workflow = ProjectWorkflow()
+    service, project_id, workflow = _ready_project(tmp_path)
     from app.schemas.research import ResearchOutput
     from app.schemas.scoring import RepositoryScore
     research = ResearchOutput(summary="Java project", github=GitHubInfo(), key_points=[], technical_details=[], interesting_facts=[], use_cases=[], topics=[])
@@ -58,14 +58,14 @@ def test_run_start_does_not_use_dummy_task_graph(tmp_path: Path) -> None:
 
 @requires_hermes
 def test_run_show_reads_real_status(tmp_path: Path) -> None:
-    service, project_id = _ready_project(tmp_path)
+    service, project_id, workflow = _ready_project(tmp_path)
     from app.schemas.research import ResearchOutput
     from app.schemas.scoring import RepositoryScore
     research = ResearchOutput(summary="Java project", github=GitHubInfo(), key_points=[], technical_details=[], interesting_facts=[], use_cases=[], topics=[])
     score = RepositoryScore(score=50, breakdown={})
     jd_text = "Java backend. Skills: Java, Spring Boot, MySQL."
     user = UserProfile(basic_skills=[], existing_projects=[], target_role="Java Backend", preferred_stack=[], unavailable_technologies=[], weekly_hours=10)
-    service.run_workflow_to_ready(project_id, jd_text, research, score, user)
+    service.run_workflow_to_ready(project_id, jd_text, research, score, user, workflow=workflow)
 
     start_result = runner.invoke(app, ["run", "start", project_id] + _base_dir_option(tmp_path))
     assert start_result.exit_code == 0
@@ -83,7 +83,7 @@ def test_run_show_reads_real_status(tmp_path: Path) -> None:
 
 
 def test_run_start_without_task_graph_fails(tmp_path: Path) -> None:
-    service, project_id = _ready_project(tmp_path)
+    service, project_id, _workflow = _ready_project(tmp_path)
     result = runner.invoke(app, ["run", "start", project_id] + _base_dir_option(tmp_path))
     assert result.exit_code != 0
     assert "Error:" in (result.output + result.stderr)
