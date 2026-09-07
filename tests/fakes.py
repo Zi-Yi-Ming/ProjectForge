@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,11 @@ def hermes_runtime_available() -> bool:
 requires_hermes = pytest.mark.skipif(
     not hermes_runtime_available(),
     reason="hermes CLI and bwrap sandbox are not available on this host",
+)
+
+requires_llm = pytest.mark.skipif(
+    not os.environ.get("PROJECTFORGE_LLM_API_KEY"),
+    reason="PROJECTFORGE_LLM_API_KEY is not set",
 )
 
 
