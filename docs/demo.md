@@ -26,17 +26,24 @@ python scripts/demo.py
 4. replan 三步：`create_proposal → approve → apply`（T2 重置为 PENDING；**人工审批是强制关卡**）
 5. resume：T1 保持 DONE 不重跑，T2 重试并通过验证 → run `COMPLETED`
 
-## 用 CLI 体验（不注入失败）
+## 用 CLI 体验（从 JD 到执行，纯命令行）
 
 ```bash
-projectforge create "我的项目" --base-dir .runtime
-projectforge transition <project_id> ANALYZING --base-dir .runtime
-projectforge transition <project_id> PLANNING --base-dir .runtime
-projectforge transition <project_id> READY --base-dir .runtime
-# 需要先持久化任务图（见 scripts/demo.py 第 2 步的写法），然后：
+# 一步从 JD 文本到 READY（规则版离线 planner，无需任何 key）
+projectforge plan ./jd.txt --planner rule --base-dir .runtime
+
+# 查看生成的任务图（导出 JSON）
+projectforge plan ./jd.txt --planner rule --base-dir .runtime --json-out graph.json
+
+# 约束式执行
 projectforge run start <project_id> --base-dir .runtime --executor mock
 projectforge run show <project_id> <run_id> --base-dir .runtime
 ```
+
+`plan` 默认用离线规则 planner；配置三个环境变量
+`PROJECTFORGE_LLM_BASE_URL / PROJECTFORGE_LLM_API_KEY / PROJECTFORGE_LLM_MODEL`
+（任何 OpenAI 兼容厂商：StepFun、DeepSeek、OpenRouter、本地 ollama）后加 `--planner llm`，
+LLM 会按 JD 生成蓝图与任务图，输出经 schema 与任务图双重校验，失败自动回退规则版、命令不会失败。
 
 真实执行把 `--executor mock` 换成 `hermes`（默认），要求 Linux + Hermes CLI + bwrap，
 见 README 的「运行真实执行」。

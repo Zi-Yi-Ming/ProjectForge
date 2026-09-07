@@ -83,87 +83,70 @@ EXECUTING
 COMPLETED / FAILED / BLOCKED
 ```
 
-## 快速开始
+## 安装
 
-### 环境要求
-
-- Python 3.10+
-- 已安装 Hermes CLI 并可在终端执行 `hermes`
-- 已安装 `bubblewrap` / `bwrap`，真实 Hermes 执行需要 sandbox 隔离
-
-### 安装
+要求 Python 3.10+。
 
 ```bash
 git clone https://github.com/Zi-Yi-Ming/ProjectForge.git
 cd ProjectForge
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
-### CLI 入口
+安装后可用 `projectforge` 命令（也可通过 `python -m app.cli.app` 调用）。
+
+## 快速开始
+
+### 1. 从 JD 到 READY（一条命令）
 
 ```bash
-python -m app.cli --help
+projectforge plan ./jd.txt --planner rule --base-dir .runtime
 ```
 
-### 常用命令
+- `--planner rule`：离线规则 planner（默认，无需任何 key）
+- `--planner llm`：LLM 生成蓝图与任务图，配置任意 OpenAI 兼容厂商即可：
 
 ```bash
-# 创建项目
-python -m app.cli create <项目名称>
-
-# 查看项目
-python -m app.cli show <project_id>
-
-# 推进项目生命周期
-python -m app.cli transition <project_id> <目标状态>
-
-# 查看项目事件
-python -m app.cli events <project_id>
-
-# 重新规划
-python -m app.cli replan create <project_id> <run_id>
-python -m app.cli replan show <project_id> <proposal_id>
-python -m app.cli replan approve <project_id> <proposal_id>
-python -m app.cli replan reject <project_id> <proposal_id>
-python -m app.cli replan apply <project_id> <proposal_id>
-
-# 执行运行
-python -m app.cli run start <project_id>
-python -m app.cli run show <project_id> <run_id>
-python -m app.cli run cancel <project_id> <run_id>
-python -m app.cli run resume <project_id> <run_id> <proposal_id>
+export PROJECTFORGE_LLM_BASE_URL=https://api.stepfun.com/v1
+export PROJECTFORGE_LLM_API_KEY=<your-key>
+export PROJECTFORGE_LLM_MODEL=step-3.7-flash
 ```
 
-> 注意：`run start` / `run resume` / `replan apply` 已接入真实执行链路；`run resume` 需要提供 `<run_id>` 和 `<proposal_id>`。`run show` / `run cancel` 依赖持久化执行记录。实际可执行能力请以代码行为为准。
+LLM 输出经 schema 与任务图双重校验，失败自动回退规则版，命令不会失败。
 
-## 5 分钟可复现演示
-
-以下演示基于当前代码真实链路，不依赖人工脑补。
-前置条件：已安装 `bubblewrap` / `bwrap`，否则 `run start` / `run resume` / `replan apply` 会因 sandbox 不可用而失败。
+### 2. 约束式执行
 
 ```bash
-# 1. 创建项目
-python -m app.cli create "Java 后端开发实习生"
+# 离线体验（无需 Hermes/bwrap）
+projectforge run start <project_id> --base-dir .runtime --executor mock
 
-# 2. 推进到 READY
-python -m app.cli transition <project_id> READY
+# 真实执行（默认 hermes，要求 Linux + Hermes CLI + bwrap，见下）
+projectforge run start <project_id> --base-dir .runtime
 
-# 3. 执行运行
-python -m app.cli run start <project_id>
-
-# 4. 查看运行
-python -m app.cli run show <project_id> <run_id>
-
-# 5. 若运行失败，查看失败后状态
-python -m app.cli replan create <project_id> <run_id>
-python -m app.cli replan approve <project_id> <proposal_id>
-python -m app.cli replan apply <project_id> <proposal_id>
-
-# 6. 从失败恢复
-python -m app.cli run resume <project_id> <run_id> <proposal_id>
+projectforge run show <project_id> <run_id> --base-dir .runtime
+projectforge run cancel <project_id> <run_id> --base-dir .runtime
 ```
+
+### 3. 失败 → replan → resume（人工审批）
+
+```bash
+projectforge replan create <project_id> <run_id> --base-dir .runtime
+projectforge replan approve <project_id> <proposal_id> --base-dir .runtime
+projectforge replan apply <project_id> <proposal_id> <run_id> --base-dir .runtime
+projectforge run resume <project_id> <run_id> <proposal_id> --base-dir .runtime
+```
+
+完整离线演示（含注入失败与人工审批）：`python scripts/demo.py`，详见 [docs/demo.md](docs/demo.md)。
+REST API 同样可用（`app.api.app:create_api`），运行与重新规划可由 HTTP 驱动。
+
+### 运行真实执行（可选）
+
+约束式执行通过 [Hermes Agent](https://github.com/NousResearch/hermes-agent) 在 bubblewrap sandbox 中完成，需要：
+
+- Hermes CLI（`hermes` 在 PATH 中，且已完成模型提供商认证）
+- bubblewrap（`bwrap`，Linux；Ubuntu 24.04+ 需为 bwrap 配置允许 unprivileged user namespace 的 AppArmor profile）
+
+缺少任一依赖时执行会 fail-closed 拒绝启动；测试套件会自动跳过真实执行用例。
 
 ## 示例
 
@@ -246,53 +229,6 @@ Java 后端开发实习生
              Validation            Replan
 ```
 
-## 安装
-
-要求 Python 3.10+。
-
-```bash
-git clone https://github.com/Zi-Yi-Ming/ProjectForge.git
-cd ProjectForge
-pip install -e .
-```
-
-安装后可用 `projectforge` 命令（也可通过 `python -m app.cli.app` 调用）。
-
-### 运行真实执行（可选）
-
-约束式执行通过 [Hermes Agent](https://github.com/NousResearch/hermes-agent) 在 bubblewrap sandbox 中完成，需要：
-
-- Hermes CLI（`hermes` 在 PATH 中，且已完成模型提供商认证）
-- bubblewrap（`bwrap`，Linux；Ubuntu 24.04+ 需为 bwrap 配置允许 unprivileged user namespace 的 AppArmor profile）
-
-缺少任一依赖时执行会 fail-closed 拒绝启动；测试套件会自动跳过真实执行用例。
-
-## 快速开始
-
-```bash
-# 创建项目
-projectforge create "我的项目" --base-dir .runtime
-
-# 推进项目状态：ANALYZING -> PLANNING -> READY
-projectforge transition <project_id> ANALYZING --base-dir .runtime
-projectforge transition <project_id> PLANNING --base-dir .runtime
-projectforge transition <project_id> READY --base-dir .runtime
-
-# 启动约束式执行（需要 Hermes + bwrap）
-projectforge run start <project_id> --base-dir .runtime
-
-# 查看运行 / 取消
-projectforge run show <project_id> <run_id> --base-dir .runtime
-projectforge run cancel <project_id> <run_id> --base-dir .runtime
-
-# 执行失败后发起重新规划（人工审批）
-projectforge replan create <project_id> <run_id> --base-dir .runtime
-projectforge replan approve <project_id> <proposal_id> --base-dir .runtime
-projectforge replan apply <project_id> <proposal_id> <run_id> --base-dir .runtime
-```
-
-也提供 FastAPI 服务（`app.api.app:create_api`），运行/重新规划可通过 REST API 驱动。
-
 ## 开发
 
 ```bash
@@ -305,7 +241,8 @@ pytest tests/test_project_core.py tests/test_workflow.py tests/test_run_control.
 
 ## 配置
 
-ProjectForge 当前不依赖任何环境变量或 `.env` 文件。
+- `PROJECTFORGE_RUNTIME_DIR`：运行时根目录（默认 `./.runtime`）
+- `PROJECTFORGE_LLM_BASE_URL` / `PROJECTFORGE_LLM_API_KEY` / `PROJECTFORGE_LLM_MODEL`：配置任意 OpenAI 兼容厂商后，`plan --planner llm` 可用；不配置则 LLM planner 自动回退规则版
 
 ## 项目状态
 

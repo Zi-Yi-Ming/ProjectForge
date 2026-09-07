@@ -325,7 +325,8 @@ class ExecutionOrchestrator:
         self.persistence.save_run(run)
 
     def _build_contract(self, task: Task, project_map: ProjectMap, run_dir: Path | None = None) -> TaskContract:
-        allowed_paths = [str(run_dir)] if run_dir is not None else []
+        # Resolve: scope matching compares against absolute workspace paths.
+        allowed_paths = [str(Path(run_dir).resolve())] if run_dir is not None else []
         from app.schemas.implementation import AllowedTestAction
 
         test_scope = (
