@@ -11,3 +11,5 @@ logs/
 outputs/
 *.egg-info/
 .coverage
+build/
+dist/
