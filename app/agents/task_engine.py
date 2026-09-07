@@ -365,22 +365,27 @@ class TaskEngine:
             task.dependencies = [dep for dep in task.dependencies if any(t.id == dep for t in self.tasks)]
 
     def _validate(self) -> TaskGraphValidation:
-        task_map = {t.id: t for t in self.tasks}
-        cycles = _detect_cycles(task_map)
-        ready = _ready_tasks(task_map)
-        blocked = [t.id for t in self.tasks if t.status == TaskStatus.PENDING and t.id not in ready]
-        order = _topological_sort(task_map)
-        return TaskGraphValidation(
-            valid=not cycles,
-            cycle_detected=bool(cycles),
-            cycle_path=cycles[:5],
-            ready_tasks=sorted(ready),
-            blocked_tasks=sorted(blocked),
-            total_tasks=len(self.tasks),
-            required_tasks=sum(1 for t in self.tasks if t.scope != "Advanced"),
-            optional_tasks=sum(1 for t in self.tasks if t.scope == "Advanced"),
-            topological_order=order,
-        )
+        return validate_tasks(self.tasks)
+
+
+def validate_tasks(tasks: list[Task]) -> TaskGraphValidation:
+    """Public graph validation shared by the rule-based and LLM planners."""
+    task_map = {t.id: t for t in tasks}
+    cycles = _detect_cycles(task_map)
+    ready = _ready_tasks(task_map)
+    blocked = [t.id for t in tasks if t.status == TaskStatus.PENDING and t.id not in ready]
+    order = _topological_sort(task_map)
+    return TaskGraphValidation(
+        valid=not cycles,
+        cycle_detected=bool(cycles),
+        cycle_path=cycles[:5],
+        ready_tasks=sorted(ready),
+        blocked_tasks=sorted(blocked),
+        total_tasks=len(tasks),
+        required_tasks=sum(1 for t in tasks if t.scope != "Advanced"),
+        optional_tasks=sum(1 for t in tasks if t.scope == "Advanced"),
+        topological_order=order,
+    )
 
 
 def _detect_cycles(task_map: dict[str, Task]) -> list[str]:
