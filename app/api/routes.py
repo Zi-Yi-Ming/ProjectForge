@@ -24,7 +24,7 @@ from app.product.errors import (
     ProjectNotFoundError,
 )
 from app.product.workflow import ProjectWorkflow
-from app.product.service import ProjectService
+from app.product.service import ProjectService, executor_factory_from_name
 from app.schemas.execution import ExecutionRun, ExecutionStatus
 from app.schemas.project import ProjectStatus
 
@@ -44,9 +44,10 @@ def _to_response(project: Any) -> ProjectResponse:
     )
 
 
-def create_api(service: ProjectService | None = None) -> FastAPI:
+def create_api(service: ProjectService | None = None, executor: str = "hermes") -> FastAPI:
     api = FastAPI(title="ProjectForge Product API", version="0.1.0")
-    service = service or ProjectService()
+    if service is None:
+        service = ProjectService(executor_factory=executor_factory_from_name(executor))
 
     @api.post("/projects", response_model=ProjectResponse, status_code=201)
     def create_project(request: CreateProjectRequest) -> JSONResponse:

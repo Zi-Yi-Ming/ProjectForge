@@ -52,13 +52,36 @@ def _new_event_id() -> str:
     return new_event_id()
 
 
+def executor_factory_from_name(executor: str) -> Any:
+    """Map an executor name to a factory building the adapter for a run dir."""
+    if executor == "hermes":
+        return None
+    if executor == "mock":
+        from app.agents.mock_executor import MockExecutor
+
+        return lambda run_dir: MockExecutor(workspace=run_dir)
+    raise ValueError(f"Unknown executor: {executor}. Choose from: hermes, mock.")
+
+
 class ProjectService:
-    def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None) -> None:
+    def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None, executor_factory: Any = None) -> None:
         self.persistence = persistence or ProjectPersistence()
         self.event_store = event_store or EventStore()
         self._active_runs: dict[str, str] = {}
+        self._executor_factory = executor_factory
         self.run_control = run_control or RunControl()
         self.replan_control = replan_control or ReplanControl(persistence=self.persistence, run_control=self.run_control)
+
+    def _build_executor(self, run_dir: Path) -> Any:
+        from app.agents.orchestrator import ExecutionOrchestrator
+
+        if self._executor_factory is not None:
+            adapter = self._executor_factory(run_dir)
+        else:
+            from app.agents.hermes_adapter import HermesAdapter
+
+            adapter = HermesAdapter(workspace=run_dir, timeout_seconds=300)
+        return ExecutionOrchestrator(adapter=adapter)
 
     @staticmethod
     def _auto_run_dir(project_id: str) -> Path:
@@ -209,10 +232,7 @@ class ProjectService:
 
         resolved_run_dir = Path(run_dir) if run_dir is not None else self._auto_run_dir(project_id)
         try:
-            from app.agents.hermes_adapter import HermesAdapter
-            from app.agents.orchestrator import ExecutionOrchestrator
-            adapter = HermesAdapter(workspace=resolved_run_dir, timeout_seconds=300)
-            executor = ExecutionOrchestrator(adapter=adapter)
+            executor = self._build_executor(resolved_run_dir)
         except Exception as exc:
             raise InvalidProjectStateError(f"Failed to initialize executor: {exc}") from exc
 
@@ -285,10 +305,7 @@ class ProjectService:
         project = self.transition_to(project_id, ProjectStatus.EXECUTING)
         resolved_run_dir = Path(run_dir) if run_dir is not None else self._auto_run_dir(project_id)
         try:
-            from app.agents.hermes_adapter import HermesAdapter
-            from app.agents.orchestrator import ExecutionOrchestrator
-            adapter = HermesAdapter(workspace=resolved_run_dir, timeout_seconds=300)
-            executor = ExecutionOrchestrator(adapter=adapter)
+            executor = self._build_executor(resolved_run_dir)
         except Exception as exc:
             raise InvalidProjectStateError(f"Failed to initialize executor: {exc}") from exc
 

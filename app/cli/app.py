@@ -20,7 +20,7 @@ from app.product.lifecycle import ProjectLifecycle
 from app.product.project_persistence import ProjectPersistence
 from app.product.replan_control import ReplanControl
 from app.product.run_control import RunControl
-from app.product.service import ProjectService
+from app.product.service import ProjectService, executor_factory_from_name
 from app.product.workflow import ProjectWorkflow
 from app.schemas.project import ProjectStatus
 
@@ -29,13 +29,20 @@ def _default_base_dir() -> Path:
     return Path(".runtime/projects")
 
 
-def _build_service(base_dir: Path | None = None) -> ProjectService:
+def _build_service(base_dir: Path | None = None, executor: str = "hermes") -> ProjectService:
     persistence = ProjectPersistence(base_dir=base_dir or _default_base_dir())
     event_store = EventStore(base_dir=base_dir or _default_base_dir())
     execution_persistence = JsonExecutionPersistence(base_dir=base_dir or _default_base_dir())
     run_control = RunControl(persistence=persistence, execution_persistence=execution_persistence, event_store=event_store)
     replan_control = ReplanControl(persistence=persistence, run_control=run_control, event_store=event_store, execution_persistence=execution_persistence)
-    return ProjectService(persistence=persistence, event_store=event_store, run_control=run_control, replan_control=replan_control)
+    return ProjectService(persistence=persistence, event_store=event_store, run_control=run_control, replan_control=replan_control, executor_factory=_executor_factory(executor))
+
+
+def _executor_factory(executor: str):
+    try:
+        return executor_factory_from_name(executor)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="ProjectForge 项目管理 CLI")
@@ -280,8 +287,8 @@ app.add_typer(run_app, name="run", help="管理项目执行运行")
 
 
 @run_app.command("start")
-def run_start(project_id: str, base_dir: Path | None = typer.Option(None, "--base-dir")) -> None:
-    service = _build_service(base_dir)
+def run_start(project_id: str, base_dir: Path | None = typer.Option(None, "--base-dir"), executor: str = typer.Option("hermes", "--executor", help="Executor backend: hermes (sandboxed CLI agent) or mock (offline).")) -> None:
+    service = _build_service(base_dir, executor=executor)
     try:
         result = service.execute_run(project_id, run_dir=base_dir or _default_base_dir())
     except ProjectNotFoundError as exc:
@@ -338,8 +345,8 @@ def run_cancel(project_id: str, run_id: str, base_dir: Path | None = typer.Optio
 
 
 @run_app.command("resume")
-def run_resume(project_id: str, run_id: str, proposal_id: str, base_dir: Path | None = typer.Option(None, "--base-dir")) -> None:
-    service = _build_service(base_dir)
+def run_resume(project_id: str, run_id: str, proposal_id: str, base_dir: Path | None = typer.Option(None, "--base-dir"), executor: str = typer.Option("hermes", "--executor", help="Executor backend: hermes (sandboxed CLI agent) or mock (offline).")) -> None:
+    service = _build_service(base_dir, executor=executor)
     try:
         result = service.resume_project(project_id, proposal_id, run_id, run_dir=base_dir or _default_base_dir())
     except ProjectNotFoundError as exc:
