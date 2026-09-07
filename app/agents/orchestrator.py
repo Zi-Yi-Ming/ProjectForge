@@ -326,6 +326,13 @@ class ExecutionOrchestrator:
 
     def _build_contract(self, task: Task, project_map: ProjectMap, run_dir: Path | None = None) -> TaskContract:
         allowed_paths = [str(run_dir)] if run_dir is not None else []
+        from app.schemas.implementation import AllowedTestAction
+
+        test_scope = (
+            [AllowedTestAction.ADD_TEST, AllowedTestAction.MODIFY_RELEVANT_TEST]
+            if task.test_paths
+            else []
+        )
         return TaskContract(
             task_id=task.id,
             project="",
@@ -344,7 +351,9 @@ class ExecutionOrchestrator:
             interview_points=list(task.interview_points),
             project_map=project_map,
             allowed_paths=allowed_paths,
-            test_scope=[],
+            test_paths=list(task.test_paths),
+            test_command=task.test_command,
+            test_scope=test_scope,
             execution_rules=[],
         )
 

@@ -58,6 +58,8 @@ class TaskContract(BaseModel):
     interview_points: list[str] = Field(default_factory=list, description="Interview-relevant points.")
     project_map: ProjectMap = Field(default_factory=ProjectMap, description="Minimal project context.")
     allowed_paths: list[str] = Field(default_factory=list, description="Allowed code/test paths.")
+    test_paths: list[str] = Field(default_factory=list, description="Workspace-relative paths holding deliverable tests.")
+    test_command: str = Field(default="", description="Deterministic test command; empty uses the pytest default.")
     test_scope: list[AllowedTestAction] = Field(default_factory=list, description="Allowed test actions.")
     execution_rules: list[str] = Field(default_factory=list, description="Hard execution rules.")
 

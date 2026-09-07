@@ -252,6 +252,10 @@ class CliAgentAdapter(CodingAgentAdapter):
         parts.append("Allowed Paths:")
         for item in contract.allowed_paths:
             parts.append(f"- {item}")
+        if contract.test_paths:
+            parts.append("Test Paths (place deliverable tests here):")
+            for item in contract.test_paths:
+                parts.append(f"- {item}")
         parts.append("Execution Rules:")
         for item in contract.execution_rules:
             parts.append(f"- {item}")
@@ -297,14 +301,23 @@ class CliAgentAdapter(CodingAgentAdapter):
     def _evaluate_scope_from_files(self, changed_files: list[str], allowed_paths: list[str]) -> ScopeStatus:
         if not allowed_paths:
             return ScopeStatus.NEEDS_REVIEW
+        base = self.workspace.resolve() if self.workspace is not None else None
         for changed in changed_files:
-            if not any(self._path_allowed(changed, allowed) for allowed in allowed_paths):
+            candidates = [changed]
+            if base is not None:
+                # Reporters give workspace-relative paths while contracts
+                # carry absolute allowed_paths; compare both forms.
+                candidates.append(str((base / changed).resolve()))
+            if not any(self._path_allowed(candidate, allowed) for candidate in candidates for allowed in allowed_paths):
                 return ScopeStatus.SCOPE_VIOLATION
         return ScopeStatus.WITHIN_SCOPE
 
     @staticmethod
     def _path_allowed(changed_path: str, allowed_path: str) -> bool:
-        return changed_path == allowed_path or changed_path.startswith(allowed_path.rstrip("/") + "/")
+        # Normalize separators so resolved Windows paths compare correctly.
+        changed = changed_path.replace("\\", "/")
+        allowed = allowed_path.replace("\\", "/")
+        return changed == allowed or changed.startswith(allowed.rstrip("/") + "/")
 
     @staticmethod
     def _now() -> str:

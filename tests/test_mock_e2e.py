@@ -60,6 +60,27 @@ def test_mock_executor_completes_run(tmp_path: Path) -> None:
     assert (run_dir / "t2_impl.txt").exists()
 
 
+def test_mock_run_with_criteria_and_tests_reaches_done(tmp_path: Path) -> None:
+    """The flagship chain: acceptance criteria no longer block when the
+    declared test suite passes; tasks reach DONE and the run COMPLETED."""
+    service = _service(tmp_path)
+    project_id = _ready_project(service)
+    run_dir = tmp_path / "ws"
+    graph = TaskGraph(
+        project=project_id,
+        tasks=[
+            Task(id="T1", phase_id="P1", title="T1", goal="g1", why="w1", dependencies=[], status=TaskStatus.PENDING, scope="Core", acceptance_criteria=["T1 works"], out_of_scope=[], interview_points=[], test_paths=["tests"]),
+            Task(id="T2", phase_id="P1", title="T2", goal="g2", why="w2", dependencies=["T1"], status=TaskStatus.PENDING, scope="Core", acceptance_criteria=["T2 works"], out_of_scope=[], interview_points=[], test_paths=["tests"]),
+        ],
+        total_tasks=2,
+        required_tasks=2,
+        optional_tasks=0,
+    )
+    run = service.start_run(project_id, graph, run_dir, _mock_orchestrator(run_dir))
+    assert run.status == ExecutionStatus.COMPLETED
+    assert all(t.status == TaskStatus.DONE for t in graph.tasks)
+
+
 def test_mock_failure_replan_cycle(tmp_path: Path) -> None:
     service = _service(tmp_path)
     project_id = _ready_project(service)

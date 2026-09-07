@@ -50,6 +50,11 @@ class TaskEngine:
         self._add_engineering_tasks(blueprint)
         self._add_advanced_tasks(blueprint)
         self._link_dependencies()
+        for task in self.tasks:
+            # Generated tasks declare where their deliverable tests live so
+            # the validator actually runs them (test_scope is derived from
+            # test_paths in the orchestrator contract).
+            task.test_paths = ["tests"]
         validation = self._validate()
         required = sum(1 for t in self.tasks if t.scope != "Advanced")
         optional = sum(1 for t in self.tasks if t.scope == "Advanced")

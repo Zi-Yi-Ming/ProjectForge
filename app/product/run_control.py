@@ -64,8 +64,6 @@ class RunControl:
     def start_run(self, project: Any, task_graph: Any = None, run_dir: Any = None, executor: Any = None) -> ExecutionRun:
         project_id = project.project_id if hasattr(project, "project_id") else str(project)
         with self._lock:
-            if project_id in self._cancellations:
-                self._cancellations.discard(project_id)
             active = self._active_runs.get(project_id)
             if active and self.execution_persistence.run_path(active).exists():
                 run = self.execution_persistence.load_run(active)
