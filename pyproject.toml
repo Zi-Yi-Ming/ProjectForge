@@ -3,7 +3,7 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "projectforge"
+name = "jdforge"
 version = "0.3.0"
 description = "JD-driven project coach and constrained execution engine"
 readme = "README.md"
