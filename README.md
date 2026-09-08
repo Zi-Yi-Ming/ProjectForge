@@ -1,5 +1,10 @@
 # ProjectForge
 
+[![PyPI](https://img.shields.io/pypi/v/jdforge.svg)](https://pypi.org/project/jdforge/)
+[![Python](https://img.shields.io/pypi/pyversions/jdforge.svg)](https://pypi.org/project/jdforge/)
+[![CI](https://github.com/Zi-Yi-Ming/ProjectForge/actions/workflows/ci.yml/badge.svg)](https://github.com/Zi-Yi-Ming/ProjectForge/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/Zi-Yi-Ming/ProjectForge/blob/master/LICENSE)
+
 > 基于岗位 JD 的工程项目教练与约束式执行引擎
 
 ProjectForge 将一份岗位 JD 转化为结构化、可验证的工程项目路径：分析能力画像、计算项目匹配度、生成项目蓝图与任务依赖图，并在约束下推进执行与重新规划。它的目标不是生成“能跑就行”的代码，而是帮你从岗位要求出发，得到一条可以向面试官展示的、经过计划与验证的真实项目路径。
@@ -86,6 +91,14 @@ COMPLETED / FAILED / BLOCKED
 ## 安装
 
 要求 Python 3.10+。
+
+**从 PyPI 安装（推荐）：**
+
+```bash
+pip install jdforge
+```
+
+**开发方式（源码安装）：**
 
 ```bash
 git clone https://github.com/Zi-Yi-Ming/ProjectForge.git
