@@ -124,11 +124,15 @@ def _build_result(data: dict[str, Any]) -> PlanningResult:
     if not tasks:
         raise ValueError("LLM returned no tasks")
 
+    graph_validation = validate_tasks(tasks)
     graph = TaskGraph(
         project=blueprint.name,
         phases=phases,
         tasks=tasks,
-        graph_validation=validate_tasks(tasks),
+        total_tasks=graph_validation.total_tasks,
+        required_tasks=graph_validation.required_tasks,
+        optional_tasks=graph_validation.optional_tasks,
+        graph_validation=graph_validation,
     )
     return PlanningResult(
         planner_name="llm",

@@ -127,3 +127,11 @@ def test_resolve_llm_config_requires_all_three(monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.setenv("PROJECTFORGE_LLM_MODEL", "m")
     monkeypatch.delenv(missing, raising=False)
     assert resolve_llm_config() is None
+
+
+def test_llm_plan_graph_counters_are_populated() -> None:
+    result = _planner([VALID_PLAN]).plan(SAMPLE_JD)
+    assert result.task_graph.total_tasks == 2
+    assert result.task_graph.required_tasks == 2
+    assert result.task_graph.optional_tasks == 0
+    assert result.task_graph.graph_validation.total_tasks == 2
