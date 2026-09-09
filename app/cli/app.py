@@ -103,7 +103,8 @@ def plan(
     service = _build_service(base_dir)
     project = service.create(Path(jd_file).stem)
     try:
-        result_project = service.plan_to_ready(project.project_id, jd_text, planner=planner)
+        result_project = service.plan_to_planning(project.project_id, jd_text, planner=planner)
+        result_project = service.approve_plan(project.project_id)
     except (InvalidProjectStateError, PersistenceError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc

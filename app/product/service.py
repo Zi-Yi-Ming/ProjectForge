@@ -247,7 +247,8 @@ class ProjectService:
         user_profile: UserProfile,
         workflow: ProjectWorkflow | None = None,
     ) -> Project:
-        """Deprecated: callers should use :meth:`plan_to_ready` instead.
+        """Deprecated: callers should use :meth:`plan_to_planning` plus
+        :meth:`approve_plan` instead.
 
         Kept for compatibility — it drives the same four-stage pipeline
         but still requires the caller to supply research/score objects
@@ -281,7 +282,7 @@ class ProjectService:
         self.transition_to(project_id, ProjectStatus.READY)
         return self.load(project_id)
 
-    def plan_to_ready(
+    def plan_to_planning(
         self,
         project_id: str,
         jd_text: str,
@@ -289,10 +290,12 @@ class ProjectService:
         planner: Any = None,
         workflow: ProjectWorkflow | None = None,
     ) -> Project:
-        """Run the planning pipeline on a CREATED project until READY.
+        """Run the planning pipeline on a CREATED project until PLANNING.
 
         Uses the injected planner (default: rule-based). The planner is
         responsible for its own fallback behaviour and never raises.
+        Stops at the plan-approval gate: call :meth:`approve_plan` to
+        move the project to READY after human review.
         """
         project = self.load(project_id)
         if project.status != ProjectStatus.CREATED:
@@ -320,8 +323,20 @@ class ProjectService:
         self.update_artifact_ref(project_id, "blueprint", bp_ref)
         self.update_artifact_ref(project_id, "task_graph", tg_ref)
 
-        self.transition_to(project_id, ProjectStatus.READY)
+        # Already PLANNING (transitioned after ANALYZING above): the plan
+        # gate stops here — approve_plan moves the project to READY.
         return self.load(project_id)
+
+    def approve_plan(self, project_id: str) -> Project:
+        """Move a PLANNING project (plan gate) to READY after human review."""
+        project = self.load(project_id)
+        if project.status != ProjectStatus.PLANNING:
+            raise InvalidProjectStateError(
+                f"Project {project_id} is not PLANNING; cannot approve from {project.status}."
+            )
+        if not project.task_graph_ref:
+            raise InvalidProjectStateError(f"Project {project_id} has no task graph to approve.")
+        return self.transition_to(project_id, ProjectStatus.READY)
 
     def execute_run(self, project_id: str, run_dir: Any = None, workflow: ProjectWorkflow | None = None) -> Project:
         project = self.load(project_id)
