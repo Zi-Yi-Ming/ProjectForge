@@ -54,17 +54,6 @@ class ProductReplanApplier(ReplanApplier):
                     task_graph.tasks.append(new_task)
                     applied_changes.append(change)
             task_graph.total_tasks = len(task_graph.tasks)
-        elif proposal.action == "ADD_DEPENDENCY":
-            target_id = proposal.proposed_changes[0].target_task_id if proposal.proposed_changes else proposal.task_id
-            target = task_map.get(target_id)
-            if target is None:
-                return self._build_result(False, proposal.proposal_id, [], ["Target task not found: {}".format(target_id)])
-            if target.status == TaskStatus.DONE:
-                return self._build_result(False, proposal.proposal_id, [], ["Cannot modify DONE task dependencies."])
-            new_dep = proposal.proposed_changes[0].task_id
-            if new_dep not in target.dependencies:
-                target.dependencies.append(new_dep)
-            applied_changes = list(proposal.proposed_changes)
         elif proposal.action == "BLOCK":
             task = task_map[proposal.task_id]
             if task.status == TaskStatus.DONE:
@@ -90,10 +79,6 @@ class ProductReplanApplier(ReplanApplier):
             if change.change_type == "ADD_TASK":
                 if change.target_task_id in task_map:
                     return ["Duplicate new task id: {}".format(change.target_task_id)]
-            if change.change_type == "ADD_DEPENDENCY":
-                target = task_map.get(change.target_task_id)
-                if target is None or target.status == TaskStatus.DONE:
-                    return ["Cannot modify dependencies for DONE or missing task: {}".format(change.target_task_id)]
         if any(t.status == TaskStatus.DONE for t in task_graph.tasks if t.id in proposal.affected_task_ids and t.id != proposal.task_id):
             return ["Proposal affects DONE task."]
         return []

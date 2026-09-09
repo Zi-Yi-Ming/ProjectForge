@@ -223,3 +223,20 @@ def test_unauditable_workspace_is_warning_only(tmp_path: Path) -> None:
     result = _validator().validate("T1", contract, _result("T1", ["t1_impl.txt"]), workspace=tmp_path)
     assert not [c for c in result.criterion_results if c.type.value == "GIT"]
     assert any("git" in w.lower() for w in result.warnings)
+
+
+def test_add_dependency_proposal_is_rejected() -> None:
+    from app.schemas.replan import ReplanAction, ReplanChange, ReplanChangeType, ReplanProposal
+
+    graph = _graph()
+    proposal = ReplanProposal(
+        proposal_id="prop-add-dep", run_id="run-test", task_id="T1",
+        action=ReplanAction.ADD_DEPENDENCY, reason="r", evidence=[],
+        affected_task_ids=["T1"],
+        proposed_changes=[ReplanChange(change_type=ReplanChangeType.ADD_DEPENDENCY, task_id="T2", target_task_id="T1", title="dep", description="d")],
+        forbidden_changes=[], requires_user_approval=True, status=ReplanProposalStatus.APPROVED, created_at="",
+    )
+    result = ProductReplanApplier().apply(proposal, graph)
+    assert not result.success
+    # T1 依赖未被修改
+    assert "T2" not in graph.tasks[0].dependencies

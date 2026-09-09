@@ -55,24 +55,15 @@ class ReplanApplier:
                     applied_changes.append(change)
             task_graph.total_tasks = len(task_graph.tasks)
 
-        elif proposal.action == ReplanAction.ADD_DEPENDENCY:
-            target_id = proposal.proposed_changes[0].target_task_id if proposal.proposed_changes else proposal.task_id
-            target = task_map.get(target_id)
-            if target is None:
-                return ReplanApplyResult(success=False, proposal_id=proposal.proposal_id, failures=[f"Target task not found: {target_id}"], message="Target task missing.")
-            if target.status == TaskStatus.DONE:
-                return ReplanApplyResult(success=False, proposal_id=proposal.proposal_id, failures=["Cannot modify DONE task dependencies."], message="DONE task immutable.")
-            new_dep = proposal.proposed_changes[0].task_id
-            if new_dep not in target.dependencies:
-                target.dependencies.append(new_dep)
-            applied_changes = list(proposal.proposed_changes)
-
         elif proposal.action == ReplanAction.BLOCK:
             task = task_map[proposal.task_id]
             if task.status == TaskStatus.DONE:
                 return ReplanApplyResult(success=False, proposal_id=proposal.proposal_id, failures=["Cannot block DONE task."], message="DONE task immutable.")
             task.status = TaskStatus.BLOCKED
             applied_changes = list(proposal.proposed_changes)
+
+        else:
+            return ReplanApplyResult(success=False, proposal_id=proposal.proposal_id, failures=[f"Unknown action: {proposal.action}"], message="Unsupported replan action.")
 
         validation = self._validate_task_graph(task_graph)
         if not validation.valid:
@@ -95,10 +86,6 @@ class ReplanApplier:
             if change.change_type == "ADD_TASK":
                 if change.target_task_id in task_map:
                     return [f"Duplicate new task id: {change.target_task_id}"]
-            if change.change_type == "ADD_DEPENDENCY":
-                target = task_map.get(change.target_task_id)
-                if target is None or target.status == TaskStatus.DONE:
-                    return [f"Cannot modify dependencies for DONE or missing task: {change.target_task_id}"]
         if any(t.status == TaskStatus.DONE for t in task_graph.tasks if t.id in proposal.affected_task_ids and t.id != proposal.task_id):
             return ["Proposal affects DONE task."]
         forbidden = {"MODIFY_BLUEPRINT", "MODIFY_ARCHITECTURE", "DELETE_DONE_TASK", "REWRITE_PROJECT"}
