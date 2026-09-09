@@ -17,6 +17,9 @@ from app.schemas.replan import (
     FailureAnalysis,
     FailureType,
     ReplanAction,
+    ReplanChange,
+    ReplanChangeType,
+    ReplanProposal,
     RecommendedAction,
     ReplanProposalStatus,
     Recoverability,
@@ -226,17 +229,16 @@ def test_unauditable_workspace_is_warning_only(tmp_path: Path) -> None:
 
 
 def test_add_dependency_proposal_is_rejected() -> None:
-    from app.schemas.replan import ReplanAction, ReplanChange, ReplanChangeType, ReplanProposal
-
     graph = _graph()
     proposal = ReplanProposal(
         proposal_id="prop-add-dep", run_id="run-test", task_id="T1",
-        action=ReplanAction.ADD_DEPENDENCY, reason="r", evidence=[],
+        action=ReplanAction.ADD_DEPENDENCY, reason="r",
         affected_task_ids=["T1"],
         proposed_changes=[ReplanChange(change_type=ReplanChangeType.ADD_DEPENDENCY, task_id="T2", target_task_id="T1", title="dep", description="d")],
-        forbidden_changes=[], requires_user_approval=True, status=ReplanProposalStatus.APPROVED, created_at="",
+        requires_user_approval=True, status=ReplanProposalStatus.APPROVED,
     )
     result = ProductReplanApplier().apply(proposal, graph)
     assert not result.success
-    # T1 依赖未被修改
+    assert any("Unknown action" in f and "ADD_DEPENDENCY" in f for f in result.failures)
+    # T1 dependencies unchanged
     assert "T2" not in graph.tasks[0].dependencies
