@@ -338,6 +338,61 @@ class ProjectService:
             raise InvalidProjectStateError(f"Project {project_id} has no task graph to approve.")
         return self.transition_to(project_id, ProjectStatus.READY)
 
+    def interview_prep(self, project_id: str, use_llm: bool = True, out_path: Path | None = None) -> str:
+        """Render the pre-interview cram document and write it to disk.
+
+        Returns the path of the written document. LLM polish is best-effort:
+        any failure falls back to the deterministic template.
+        """
+        from app.agents.interview import InterviewDocBuilder
+        from app.agents.llm_planner import resolve_llm_config
+
+        self.load(project_id)  # raises ProjectNotFoundError before artifact access
+        workflow = ProjectWorkflow(base_dir=self.base_dir)
+        try:
+            jd_profile = workflow.load_jd_profile(project_id)
+            blueprint = workflow.load_blueprint(project_id)
+            task_graph = workflow.load_task_graph(project_id)
+        except FileNotFoundError as exc:
+            raise InvalidProjectStateError(
+                f"Project {project_id} is missing planning artifacts; run plan first ({exc})."
+            ) from exc
+        records = self._latest_run_records(project_id)
+        config = resolve_llm_config() if use_llm else None
+        doc = InterviewDocBuilder(config=config).build(jd_profile, blueprint, task_graph, records)
+        target = out_path or self.base_dir / "projects" / project_id / "interview_prep.md"
+        Path(target).write_text(doc, encoding="utf-8")
+        return str(target)
+
+    def _latest_run_records(self, project_id: str) -> list[Any] | None:
+        project = self.load(project_id)
+        run_id = project.last_run_id or self._latest_run_id(project_id)
+        if not run_id:
+            return None
+        try:
+            return list(self.run_control.execution_persistence.load_run(run_id).task_results)
+        except FileNotFoundError:
+            return None
+
+    def _latest_run_id(self, project_id: str) -> str:
+        """Fall back to a directory scan for the newest run of a project.
+
+        Run ids are ``run-<project_id>-<fixed-width timestamp>`` so
+        lexicographic order matches chronological order. Used when the
+        project record has no persisted last_run_id (runs started via
+        RunControl directly bypass the ProjectService bookkeeping).
+        """
+        runs_dir = self.run_control.execution_persistence.runs_dir
+        if not runs_dir.is_dir():
+            return ""
+        prefix = f"run-{project_id}-"
+        candidates = sorted(
+            entry.name
+            for entry in runs_dir.iterdir()
+            if entry.name.startswith(prefix) and (entry / "execution.json").exists()
+        )
+        return candidates[-1] if candidates else ""
+
     def execute_run(self, project_id: str, run_dir: Any = None, workflow: ProjectWorkflow | None = None) -> Project:
         project = self.load(project_id)
         if project.status != ProjectStatus.READY:

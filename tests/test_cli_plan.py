@@ -102,3 +102,21 @@ def test_cli_plan_approve_twice_rejected(tmp_path: Path) -> None:
     r3 = runner.invoke(app, ["plan", "approve", pid, "--base-dir", str(base)])
     assert r3.exit_code == 1
     assert "Error" in r3.output + r3.stderr
+
+
+def test_cli_interview_command(tmp_path: Path) -> None:
+    jd_path = _jd_file(tmp_path)
+    base = tmp_path / "base"
+    r1 = runner.invoke(app, ["plan", "new", str(jd_path), "--planner", "rule", "--base-dir", str(base)])
+    assert r1.exit_code == 0
+    pid = [line.split(": ", 1)[1] for line in r1.output.splitlines() if line.startswith("Project ID: ")][0]
+    runner.invoke(app, ["plan", "approve", pid, "--base-dir", str(base)])
+    result = runner.invoke(app, ["interview", pid, "--base-dir", str(base), "--no-llm"])
+    assert result.exit_code == 0, result.output + result.stderr
+    assert "项目速览" in result.output
+
+
+def test_cli_interview_missing_project(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["interview", "proj-nope", "--base-dir", str(tmp_path), "--no-llm"])
+    assert result.exit_code == 1
+    assert "Error" in result.output + result.stderr

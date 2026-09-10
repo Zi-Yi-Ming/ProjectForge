@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import httpx
 
-from app.agents.llm_planner import _extract_json
+from app.agents.llm_planner import LlmConfig, _extract_json
 from app.schemas.blueprint import ProjectBlueprint, UserProfile
 from app.schemas.execution import TaskExecutionRecord
 from app.schemas.jd import JDProfile
@@ -21,10 +20,11 @@ class InterviewDocBuilder:
     config the pitch/story sections are polished by the LLM and everything
     else stays deterministic; any LLM failure falls back to the template."""
 
-    def __init__(self, config: Any | None = None, client: httpx.Client | None = None) -> None:
+    def __init__(self, config: LlmConfig | None = None, client: httpx.Client | None = None) -> None:
         self._config = config
-        self._client = client
+        self._client = client or httpx.Client()
         self.last_polish_failed = False
+        self.last_polish_error = ""
 
     def build(
         self,
@@ -61,14 +61,17 @@ class InterviewDocBuilder:
                         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
                     ],
                     "temperature": 0.3,
+                    "response_format": {"type": "json_object"},
                 },
             )
             response.raise_for_status()
             data = _extract_json(response.json()["choices"][0]["message"]["content"])
             self.last_polish_failed = False
+            self.last_polish_error = ""
             return {"quick_pitch": str(data["quick_pitch"]), "architecture_story": str(data["architecture_story"])}
-        except Exception:
+        except Exception as exc:
             self.last_polish_failed = True
+            self.last_polish_error = f"{type(exc).__name__}: {exc}"[:200]
             return None
 
     def _render(

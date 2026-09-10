@@ -145,6 +145,24 @@ def plan_approve(
 
 
 @app.command()
+def interview(
+    project_id: str,
+    base_dir: Path | None = typer.Option(None, "--base-dir"),
+    out: Path | None = typer.Option(None, "--out", help="输出文件路径（默认 <base-dir>/projects/<pid>/interview_prep.md）"),
+    no_llm: bool = typer.Option(False, "--no-llm", help="跳过 LLM 润色，直接模板渲染"),
+) -> None:
+    """Generate the pre-interview cram document for a project."""
+    service = _build_service(base_dir)
+    try:
+        path = service.interview_prep(project_id, use_llm=not no_llm, out_path=out)
+    except (ProjectNotFoundError, InvalidProjectStateError, PersistenceError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(path)
+    typer.echo(Path(path).read_text(encoding="utf-8"))
+
+
+@app.command()
 def show(project_id: str, base_dir: Path | None = typer.Option(None, "--base-dir")) -> None:
     service = _build_service(base_dir)
     try:
