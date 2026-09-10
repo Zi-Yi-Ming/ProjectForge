@@ -120,3 +120,17 @@ def test_cli_interview_missing_project(tmp_path: Path) -> None:
     result = runner.invoke(app, ["interview", "proj-nope", "--base-dir", str(tmp_path), "--no-llm"])
     assert result.exit_code == 1
     assert "Error" in result.output + result.stderr
+
+
+def test_cli_interview_out_path(tmp_path: Path) -> None:
+    jd_path = _jd_file(tmp_path)
+    base = tmp_path / "base"
+    r1 = runner.invoke(app, ["plan", "new", str(jd_path), "--planner", "rule", "--base-dir", str(base)])
+    assert r1.exit_code == 0
+    pid = [line.split(": ", 1)[1] for line in r1.output.splitlines() if line.startswith("Project ID: ")][0]
+    runner.invoke(app, ["plan", "approve", pid, "--base-dir", str(base)])
+    out = tmp_path / "nested" / "dir" / "prep.md"
+    result = runner.invoke(app, ["interview", pid, "--base-dir", str(base), "--no-llm", "--out", str(out)])
+    assert result.exit_code == 0, result.output + result.stderr
+    assert out.exists()
+    assert "项目速览" in out.read_text(encoding="utf-8")

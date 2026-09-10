@@ -361,6 +361,7 @@ class ProjectService:
         config = resolve_llm_config() if use_llm else None
         doc = InterviewDocBuilder(config=config).build(jd_profile, blueprint, task_graph, records)
         target = out_path or self.base_dir / "projects" / project_id / "interview_prep.md"
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
         Path(target).write_text(doc, encoding="utf-8")
         return str(target)
 
