@@ -16,7 +16,7 @@ Format: Keep a Changelog; versioning: SemVer（0.x 阶段 minor = 能力/破坏�
 ### Changed
 - BREAKING: `--base-dir` 语义改为运行时根（projects/、runs/、workspaces/）
 
-## [0.2.0] - 2026-09-08
+## [0.2.0] - 2026-09-07
 ### Added
 - executor 可插拔（`--executor {hermes,mock}`）+ 离线 MockExecutor
 - cancel 真正中断执行（持久粘滞标志 + 任务间检查点）
