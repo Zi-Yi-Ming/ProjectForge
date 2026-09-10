@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+
+import httpx
+
 from app.agents.interview import InterviewDocBuilder
+from app.agents.llm_planner import LlmConfig
 from app.agents.planner import RuleBasedPlanner
 from app.schemas.blueprint import UserProfile
 
@@ -75,3 +80,46 @@ def test_user_profile_fields_rendered() -> None:
         user_profile=UserProfile(basic_skills=["Java"], weekly_hours=8),
     )
     assert "每周 8 小时" in doc
+
+
+def _llm_builder(content: str) -> InterviewDocBuilder:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    config = LlmConfig(base_url="https://api.test/v1", api_key="k", model="m")
+    return InterviewDocBuilder(config=config, client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+def test_llm_polish_replaces_quick_pitch_and_story() -> None:
+    r = _planning_result()
+    content = json.dumps({
+        "quick_pitch": "这是一个把岗位 JD 变成可验证工程项目的 RAG 系统。",
+        "architecture_story": "整体采用 FastAPI + LangChain 分层架构，数据从文档解析进入向量库再回流答案。",
+    }, ensure_ascii=False)
+    doc = _llm_builder(content).build(r.jd_profile, r.blueprint, r.task_graph, records=None)
+    assert "这是一个把岗位 JD 变成可验证工程项目的 RAG 系统。" in doc
+    assert "整体采用 FastAPI + LangChain 分层架构" in doc
+    # 红线与逐任务深挖不受 LLM 影响
+    for claim in r.blueprint.claims_to_avoid:
+        assert claim in doc
+    assert "逐任务深挖" in doc
+
+
+def test_llm_polish_failure_falls_back_to_template() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    config = LlmConfig(base_url="https://api.test/v1", api_key="k", model="m")
+    builder = InterviewDocBuilder(config=config, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    r = _planning_result()
+    doc = builder.build(r.jd_profile, r.blueprint, r.task_graph, records=None)
+    assert "项目速览" in doc  # 模板兜底成功
+    assert builder.last_polish_failed is True
+
+
+def test_no_llm_config_skips_polish() -> None:
+    r = _planning_result()
+    builder = InterviewDocBuilder(config=None, client=None)
+    doc = builder.build(r.jd_profile, r.blueprint, r.task_graph, records=None)
+    assert "项目速览" in doc
+    assert builder.last_polish_failed is False
