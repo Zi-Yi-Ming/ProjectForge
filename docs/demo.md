@@ -29,14 +29,11 @@ python scripts/demo.py
 ## 用 CLI 体验（从 JD 到执行，纯命令行）
 
 ```bash
-# 从 JD 文本规划到 PLANNING（规则版离线 planner，无需任何 key）
-projectforge plan new ./jd.txt --planner rule --base-dir .runtime
+# 从 JD 文本规划到 PLANNING（规则版离线 planner，无需任何 key），任务图导出为 graph.json
+projectforge plan new ./jd.txt --planner rule --base-dir .runtime --json-out graph.json
 
 # 审批计划（PLANNING -> READY，审批后才能执行）
 projectforge plan approve <project_id> --base-dir .runtime
-
-# 查看生成的任务图（导出 JSON）
-projectforge plan new ./jd.txt --planner rule --base-dir .runtime --json-out graph.json
 
 # 约束式执行
 projectforge run start <project_id> --base-dir .runtime --executor mock

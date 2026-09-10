@@ -30,6 +30,7 @@ def test_cli_plan_rule_end_to_end(tmp_path: Path) -> None:
     result = runner.invoke(app, ["plan", "new", str(jd_path), "--planner", "rule", "--base-dir", str(base)])
     assert result.exit_code == 0, result.output + result.stderr
     assert "Status: PLANNING" in result.output
+    assert "Tasks:" in result.output
     pid = [line.split(": ", 1)[1] for line in result.output.splitlines() if line.startswith("Project ID: ")][0]
     result = runner.invoke(app, ["plan", "approve", pid, "--base-dir", str(base)])
     assert result.exit_code == 0, result.output + result.stderr
@@ -81,3 +82,23 @@ def test_cli_plan_missing_file(tmp_path: Path) -> None:
     result = runner.invoke(app, ["plan", "new", str(tmp_path / "nope.md"), "--planner", "rule"])
     assert result.exit_code == 1
     assert "Error" in result.output + result.stderr
+
+
+def test_cli_plan_approve_missing_project(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["plan", "approve", "proj-nope", "--base-dir", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "Error" in result.output + result.stderr
+
+
+def test_cli_plan_approve_twice_rejected(tmp_path: Path) -> None:
+    # plan new → approve（READY）→ 再 approve → 非 PLANNING 抛错 exit 1
+    jd_path = _jd_file(tmp_path)
+    base = tmp_path / "base"
+    r1 = runner.invoke(app, ["plan", "new", str(jd_path), "--planner", "rule", "--base-dir", str(base)])
+    assert r1.exit_code == 0
+    pid = [line.split(": ", 1)[1] for line in r1.output.splitlines() if line.startswith("Project ID: ")][0]
+    r2 = runner.invoke(app, ["plan", "approve", pid, "--base-dir", str(base)])
+    assert r2.exit_code == 0
+    r3 = runner.invoke(app, ["plan", "approve", pid, "--base-dir", str(base)])
+    assert r3.exit_code == 1
+    assert "Error" in r3.output + r3.stderr

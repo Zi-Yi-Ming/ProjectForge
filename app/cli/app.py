@@ -113,7 +113,7 @@ def plan_new(
         raise typer.Exit(code=1) from exc
 
     task_graph = ProjectWorkflow(base_dir=base_dir or _default_base_dir()).load_task_graph(project.project_id)
-    typer.echo(f"Plan completed")
+    typer.echo(f"Plan generated (awaiting approval)")
     typer.echo(f"Project ID: {result_project.project_id}")
     typer.echo(f"Status: {result_project.status.value}")
     typer.echo(f"Tasks: {task_graph.total_tasks} (required {task_graph.required_tasks}, optional {task_graph.optional_tasks})")
@@ -124,7 +124,7 @@ def plan_new(
         Path(json_out).write_text(task_graph.model_dump_json(indent=2), encoding="utf-8")
         typer.echo(f"Task graph written to {json_out}")
 
-    typer.echo("下一步: projectforge plan approve <project_id>")
+    typer.echo("下一步: projectforge plan approve <project_id> --base-dir <同 plan new>")
 
 
 @plan_app.command("approve")
@@ -136,13 +136,7 @@ def plan_approve(
     service = _build_service(base_dir)
     try:
         result = service.approve_plan(project_id)
-    except ProjectNotFoundError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except InvalidProjectStateError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except PersistenceError as exc:
+    except (ProjectNotFoundError, InvalidProjectStateError, PersistenceError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(f"Plan approved")
