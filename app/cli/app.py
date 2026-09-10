@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -159,7 +160,14 @@ def interview(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(path)
-    typer.echo(Path(path).read_text(encoding="utf-8"))
+    doc = Path(path).read_text(encoding="utf-8")
+    try:
+        typer.echo(doc)
+    except UnicodeEncodeError:
+        # Legacy Windows consoles (e.g. GBK) cannot encode every glyph in
+        # the document; degrade gracefully instead of crashing mid-output.
+        encoding = sys.stdout.encoding or "utf-8"
+        typer.echo(doc.encode(encoding, errors="replace").decode(encoding, errors="replace"))
 
 
 @app.command()
