@@ -29,18 +29,21 @@ python scripts/demo.py
 ## 用 CLI 体验（从 JD 到执行，纯命令行）
 
 ```bash
-# 一步从 JD 文本到 READY（规则版离线 planner，无需任何 key）
-projectforge plan ./jd.txt --planner rule --base-dir .runtime
+# 从 JD 文本规划到 PLANNING（规则版离线 planner，无需任何 key）
+projectforge plan new ./jd.txt --planner rule --base-dir .runtime
+
+# 审批计划（PLANNING -> READY，审批后才能执行）
+projectforge plan approve <project_id> --base-dir .runtime
 
 # 查看生成的任务图（导出 JSON）
-projectforge plan ./jd.txt --planner rule --base-dir .runtime --json-out graph.json
+projectforge plan new ./jd.txt --planner rule --base-dir .runtime --json-out graph.json
 
 # 约束式执行
 projectforge run start <project_id> --base-dir .runtime --executor mock
 projectforge run show <project_id> <run_id> --base-dir .runtime
 ```
 
-`plan` 默认用离线规则 planner；配置三个环境变量
+`plan new` 默认用离线规则 planner；配置三个环境变量
 `PROJECTFORGE_LLM_BASE_URL / PROJECTFORGE_LLM_API_KEY / PROJECTFORGE_LLM_MODEL`
 （任何 OpenAI 兼容厂商：StepFun、DeepSeek、OpenRouter、本地 ollama）后加 `--planner llm`，
 LLM 会按 JD 生成蓝图与任务图，输出经 schema 与任务图双重校验，失败自动回退规则版、命令不会失败。

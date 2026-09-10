@@ -76,14 +76,18 @@ def create(name: str, base_dir: Path | None = typer.Option(None, "--base-dir")) 
     typer.echo(f"Stage: {project.current_stage}")
 
 
-@app.command()
-def plan(
+plan_app = typer.Typer(add_completion=False, no_args_is_help=True, help="从 JD 规划项目并审批")
+app.add_typer(plan_app, name="plan", help="从 JD 规划项目并审批")
+
+
+@plan_app.command("new")
+def plan_new(
     jd_file: Path,
     planner_name: str = typer.Option("rule", "--planner", help="Planner backend: rule (offline) or llm (OpenAI-compatible API)."),
     base_dir: Path | None = typer.Option(None, "--base-dir"),
     json_out: Path | None = typer.Option(None, "--json-out", help="Write the task graph JSON to this file."),
 ) -> None:
-    """Plan an interview project from a JD text file: JD -> READY in one step."""
+    """Plan a project from a JD text file: JD -> PLANNING (awaiting approval)."""
     try:
         planner = _planner_factory(planner_name)
     except typer.BadParameter as exc:
@@ -104,7 +108,6 @@ def plan(
     project = service.create(Path(jd_file).stem)
     try:
         result_project = service.plan_to_planning(project.project_id, jd_text, planner=planner)
-        result_project = service.approve_plan(project.project_id)
     except (InvalidProjectStateError, PersistenceError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -120,6 +123,31 @@ def plan(
     if json_out is not None:
         Path(json_out).write_text(task_graph.model_dump_json(indent=2), encoding="utf-8")
         typer.echo(f"Task graph written to {json_out}")
+
+    typer.echo("下一步: projectforge plan approve <project_id>")
+
+
+@plan_app.command("approve")
+def plan_approve(
+    project_id: str,
+    base_dir: Path | None = typer.Option(None, "--base-dir"),
+) -> None:
+    """Approve a PLANNING project: unlock execution (PLANNING -> READY)."""
+    service = _build_service(base_dir)
+    try:
+        result = service.approve_plan(project_id)
+    except ProjectNotFoundError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except InvalidProjectStateError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except PersistenceError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Plan approved")
+    typer.echo(f"Project ID: {result.project_id}")
+    typer.echo(f"Status: {result.status.value}")
 
 
 @app.command()

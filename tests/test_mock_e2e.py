@@ -110,12 +110,15 @@ def test_mock_failure_replan_cycle(tmp_path: Path) -> None:
 
 
 def test_cli_run_start_with_mock_executor(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["create", "Mock CLI"] + ["--base-dir", str(tmp_path)])
-    assert result.exit_code == 0
-    project_id = [line.split(": ", 1)[1] for line in result.output.splitlines() if line.startswith("ID: ")][0]
-    for status in (ProjectStatus.ANALYZING, ProjectStatus.PLANNING, ProjectStatus.READY):
-        result = runner.invoke(app, ["transition", project_id, status.value, "--base-dir", str(tmp_path)])
-        assert result.exit_code == 0
+    jd_path = tmp_path / "mock-cli.md"
+    jd_path.write_text("岗位：Java 后端开发工程师\n\n任职要求：\n1. Java\n", encoding="utf-8")
+    result = runner.invoke(app, ["plan", "new", str(jd_path), "--base-dir", str(tmp_path)])
+    assert result.exit_code == 0, result.output + result.stderr
+    assert "Status: PLANNING" in result.output
+    project_id = [line.split(": ", 1)[1] for line in result.output.splitlines() if line.startswith("Project ID: ")][0]
+    result = runner.invoke(app, ["plan", "approve", project_id, "--base-dir", str(tmp_path)])
+    assert result.exit_code == 0, result.output + result.stderr
+    assert "Status: READY" in result.output
 
     graph = TaskGraph(
         project=project_id,
