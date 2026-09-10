@@ -27,7 +27,7 @@ class InterviewDocBuilder:
         lines.append("")
         lines.append(f"- 业务场景：{blueprint.business_scenario}")
         lines.append(f"- 目标用户：{'、'.join(blueprint.target_users) or '—'}")
-        lines.append(f"- 技术栈：{'、'.join(blueprint.technology_stack)}")
+        lines.append(f"- 技术栈：{'、'.join(blueprint.technology_stack) or '—'}")
         if user_profile is not None:
             lines.append(f"- 候选人时间投入：每周 {user_profile.weekly_hours} 小时")
             if user_profile.target_role:
@@ -57,6 +57,8 @@ class InterviewDocBuilder:
                 lines.append(f"- 技术点：{p}")
             for ip in task.interview_points:
                 lines.append(f"- 面试表达：{ip}")
+            for q in blueprint.likely_questions:
+                lines.append(f"- 可能被问：{q}")
             lines.append("")
         done = [r for r in (records or []) if r.status == "DONE"]
         if done:
@@ -67,7 +69,7 @@ class InterviewDocBuilder:
                 ran = f"{(ck.head_before or '')[:8]}..{(ck.head_after or '')[:8]}" if ck else "—"
                 n_files = len(ck.changed_files) if ck else 0
                 status = r.validation_result.status.value if r.validation_result else "—"
-                line = f"- {r.task_id} {r.title}: 验证 {status}，提交 {ran}，变更 {n_files} 个文件"
+                line = f"- {r.task_id} {r.title}：验证 {status}，提交 {ran}，变更 {n_files} 个文件"
                 if ck and ck.changed_files:
                     line += f"（{'、'.join(ck.changed_files)}）"
                 lines.append(line)

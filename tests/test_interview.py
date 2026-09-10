@@ -33,6 +33,9 @@ def test_template_doc_includes_task_details() -> None:
         assert c in doc
     for ip in first.interview_points:
         assert ip in doc
+    # 每个任务卡片末尾渲染 blueprint.likely_questions（RuleBasedPlanner 产出非空）
+    assert r.blueprint.likely_questions
+    assert any(q in doc for q in r.blueprint.likely_questions)
 
 
 def test_execution_evidence_section_appears_with_records() -> None:
@@ -71,4 +74,4 @@ def test_user_profile_fields_rendered() -> None:
         r.jd_profile, r.blueprint, r.task_graph, records=None,
         user_profile=UserProfile(basic_skills=["Java"], weekly_hours=8),
     )
-    assert "Java" in doc
+    assert "每周 8 小时" in doc
