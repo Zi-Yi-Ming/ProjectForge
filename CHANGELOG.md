@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file.
 Format: Keep a Changelog; versioning: SemVer（0.x 阶段 minor = 能力/破坏性变更，patch = 修复）。
 
+## [Unreleased]
+### Fixed
+- 任务工作区与外层宿主仓库的 git 隔离：工作区若嵌套在无关仓库内，
+  原先会复用该仓库（`--is-inside-work-tree` 对任意嵌套路径都返回 true），
+  导致执行器的逐任务提交污染宿主仓库历史、checkpoint diff 跨到无关文件。
+  现由 orchestrator 比对 `--show-toplevel` 并初始化为自有嵌套仓库，
+  adapter 侧 `_workspace_owns_repo()` 双重守卫拒绝读写外部仓库。
+
 ## [0.4.0] - 2026-09-08
 ### Added
 - `projectforge interview <project_id>`：面试前突击复习文档（①项目速览 ②架构讲法 ③逐任务深挖 ④执行证据 ⑤红线；LLM 润色 + 模板兜底双路径）
