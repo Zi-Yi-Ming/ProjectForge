@@ -3,7 +3,7 @@
 All notable changes to this project are documented in this file.
 Format: Keep a Changelog; versioning: SemVer（0.x 阶段 minor = 能力/破坏性变更，patch = 修复）。
 
-## [Unreleased]
+## [0.4.1] - 2026-09-13
 ### Fixed
 - 任务工作区与外层宿主仓库的 git 隔离：工作区若嵌套在无关仓库内，
   原先会复用该仓库（`--is-inside-work-tree` 对任意嵌套路径都返回 true），
