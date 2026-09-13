@@ -368,9 +368,17 @@ class ExecutionOrchestrator:
         return "execution stopped"
 
     def _ensure_git_baseline(self, run_dir: Path) -> None:
-        """Make the workspace auditable: when it is not a git repository,
-        initialise one and commit a baseline so adapters can capture real
-        checkpoints. Never raises — a git-less host only loses auditability."""
+        """Make the workspace auditable: when it is not its own git
+        repository, initialise one and commit a baseline so adapters can
+        capture real checkpoints. Never raises — a git-less host only
+        loses auditability.
+
+        The workspace must own its repository. A run dir merely nested
+        inside an unrelated parent repository (e.g. a workspace under a
+        checked-out source tree) must NOT reuse that parent: committing
+        task artifacts there would pollute the host repo's history and
+        make the per-task checkpoint diff span unrelated files.
+        """
         import subprocess
 
         def _git(args: list[str], check: bool = False) -> subprocess.CompletedProcess:
@@ -384,9 +392,16 @@ class ExecutionOrchestrator:
             )
 
         try:
-            inside = _git(["rev-parse", "--is-inside-work-tree"])
-            if inside.returncode != 0 or inside.stdout.strip() != b"true":
+            run_dir_resolved = Path(run_dir).resolve()
+            toplevel = _git(["rev-parse", "--show-toplevel"])
+            if toplevel.returncode != 0:
+                # Not inside any repository — safe to create our own.
                 _git(["init", "-q"], check=True)
+            elif Path(toplevel.stdout.decode("utf-8", "replace").strip()).resolve() != run_dir_resolved:
+                # Nested inside a foreign repository: detach by creating a
+                # nested, self-contained repo owned by the workspace.
+                _git(["init", "-q"], check=True)
+
             head = _git(["rev-parse", "HEAD"])
             if head.returncode == 0:
                 return  # existing repo with commits: leave dirty state untouched

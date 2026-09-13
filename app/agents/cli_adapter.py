@@ -263,6 +263,8 @@ class CliAgentAdapter(CodingAgentAdapter):
         return "\n".join(parts)
 
     def _git_checkpoint_before(self, workspace: Path) -> tuple[str, list[str]]:
+        if not self._workspace_owns_repo(workspace):
+            return "", []
         head = self._run_git(["rev-parse", "HEAD"], workspace)
         status = self._run_git(["status", "--short"], workspace)
         files = [line.strip() for line in status.stdout.splitlines() if line.strip()]
@@ -271,8 +273,15 @@ class CliAgentAdapter(CodingAgentAdapter):
     def _commit_task_changes(self, workspace: Path, task_id: str) -> None:
         """Commit the task's working-tree changes so each task has its own
         auditable commit (HEAD movement + per-task diff). Best-effort: a
-        git-less workspace simply yields an empty checkpoint."""
+        git-less workspace simply yields an empty checkpoint.
+
+        Guards against committing into a foreign parent repository when the
+        workspace is merely nested inside one: such a commit would pollute
+        the host repo and make the per-task diff span unrelated files.
+        """
         try:
+            if not self._workspace_owns_repo(workspace):
+                return
             subprocess.run(["git", "add", "-A"], cwd=str(workspace), capture_output=True, timeout=60, check=True)
             subprocess.run(
                 ["git", "commit", "-q", "-m", f"task {task_id}", "--allow-empty"],
@@ -280,6 +289,26 @@ class CliAgentAdapter(CodingAgentAdapter):
             )
         except Exception:
             pass
+
+    @staticmethod
+    def _workspace_owns_repo(workspace: Path) -> bool:
+        """True when the workspace is (or is inside) its own repository
+        rooted at the workspace itself — not a nested path of a foreign
+        parent repository."""
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=str(workspace),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,
+            )
+            if proc.returncode != 0:
+                return False
+            toplevel = Path(proc.stdout.decode("utf-8", "replace").strip())
+            return toplevel.resolve() == Path(workspace).resolve()
+        except Exception:
+            return False
 
     def _git_checkpoint_after(self, workspace: Path, head_before: str = "") -> tuple[list[str], str, str]:
         head_after = self._run_git(["rev-parse", "HEAD"], workspace).stdout.strip()
