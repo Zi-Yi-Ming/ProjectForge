@@ -99,9 +99,11 @@ def resolve_task_timeout(base: int | None = None) -> int:
 
 def planner_factory_from_name(planner: str) -> Any:
     """Map a planner name to a Planner instance ("rule" or "llm")."""
-    if planner == "rule":
-        from app.agents.planner import RuleBasedPlanner
+    # Import at function scope, not inside a branch: the LLM planner wraps the
+    # rule-based one for fallback, so both branches need this name bound.
+    from app.agents.planner import RuleBasedPlanner
 
+    if planner == "rule":
         return RuleBasedPlanner()
     if planner == "llm":
         from app.agents.llm_planner import LlmPlanner, resolve_llm_config
@@ -136,7 +138,10 @@ class ProjectService:
             from app.agents.hermes_adapter import HermesAdapter
 
             adapter = HermesAdapter(workspace=run_dir, timeout_seconds=self.task_timeout)
-        return ExecutionOrchestrator(adapter=adapter)
+        # Keep audit artifacts under runs/<run_id>/artifacts (the documented
+        # layout) rather than inside the executor workspace, where they would
+        # be swept into the per-task git checkpoint.
+        return ExecutionOrchestrator(adapter=adapter, artifacts_root=self.base_dir / "runs")
 
     def _auto_run_dir(self, project_id: str) -> Path:
         run_dir = self.base_dir / "workspaces" / project_id

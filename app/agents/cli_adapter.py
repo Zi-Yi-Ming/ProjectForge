@@ -278,11 +278,19 @@ class CliAgentAdapter(CodingAgentAdapter):
         Guards against committing into a foreign parent repository when the
         workspace is merely nested inside one: such a commit would pollute
         the host repo and make the per-task diff span unrelated files.
+
+        The ``artifacts`` directory is excluded: the orchestrator writes
+        audit artifacts into the workspace, and sweeping them into the
+        per-task commit would make each task's diff include the previous
+        task's artifacts.
         """
         try:
             if not self._workspace_owns_repo(workspace):
                 return
-            subprocess.run(["git", "add", "-A"], cwd=str(workspace), capture_output=True, timeout=60, check=True)
+            subprocess.run(
+                ["git", "add", "-A", "--", ".", ":(exclude)artifacts"],
+                cwd=str(workspace), capture_output=True, timeout=60, check=True,
+            )
             subprocess.run(
                 ["git", "commit", "-q", "-m", f"task {task_id}", "--allow-empty"],
                 cwd=str(workspace), capture_output=True, timeout=60, check=True,

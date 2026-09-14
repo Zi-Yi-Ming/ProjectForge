@@ -41,6 +41,9 @@ dependencies 只能引用 tasks 中已有的 id，且不得成环；每个任务
 
 _MAX_JD_CHARS = 8000
 _MAX_TOKENS = 8000
+# Plan generation returns a large JSON document; the httpx default (5s) is far
+# too short for a real provider round-trip.
+_LLM_TIMEOUT_SECONDS = 300.0
 
 
 @dataclass(frozen=True)
@@ -158,7 +161,9 @@ class LlmPlanner:
     def __init__(self, rule: RuleBasedPlanner, config: LlmConfig | None, client: httpx.Client | None = None) -> None:
         self._rule = rule
         self._config = config
-        self._client = client
+        # Never leave this None: plan() dereferences it, and an AttributeError
+        # would escape the fallback contract (it is not an httpx/parse error).
+        self._client = client or httpx.Client(timeout=_LLM_TIMEOUT_SECONDS)
 
     def plan(self, jd_text: str, user_profile: UserProfile | None = None) -> PlanningResult:
         if self._config is None:

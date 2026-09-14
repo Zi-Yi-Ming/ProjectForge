@@ -3,6 +3,25 @@
 All notable changes to this project are documented in this file.
 Format: Keep a Changelog; versioning: SemVer（0.x 阶段 minor = 能力/破坏性变更，patch = 修复）。
 
+## [0.4.2] - 2026-09-14
+### Fixed
+- **`--planner llm` 完全不可用**：`planner_factory_from_name` 把规则版 planner 的
+  import 关在 `"rule"` 分支内，`"llm"` 分支引用它触发 `UnboundLocalError`，
+  命令直接崩溃。导入提到函数作用域后修复。
+- **LLM planner 缺省 client 缺失**：`LlmPlanner` 在未注入 client 时 `_client` 为 `None`
+  （工厂正是这样构造的），触发 `AttributeError` 逃出 `plan()` 的降级捕获，
+  破坏"永不抛错、失败回退规则版"契约。改为 `client or httpx.Client(...)`。
+- **LLM 调用超时过短**：`LlmPlanner` 与 `InterviewDocBuilder` 使用 httpx 默认 5 秒超时，
+  真实 LLM 往返必然超时并静默降级到模板。改为显式 300 秒。
+- **审计产物污染任务 checkpoint**：编排器把 artifacts 写进执行工作区，被 CLI 适配器的
+  逐任务 `git add -A` 卷入提交，导致每个任务的 diff 夹带上一个任务的产物、
+  违背"逐任务精确 diff"的承诺。修复：产物改存 `runs/<run_id>/artifacts`（文档约定布局），
+  且适配器提交显式排除 `artifacts`。
+
+### Added
+- 回归测试：`tests/test_planner_factory.py`（工厂四条路径 + 降级契约）、
+  `tests/test_artifact_isolation.py`（产物位置与 checkpoint 隔离）。
+
 ## [0.4.1] - 2026-09-13
 ### Fixed
 - 任务工作区与外层宿主仓库的 git 隔离：工作区若嵌套在无关仓库内，

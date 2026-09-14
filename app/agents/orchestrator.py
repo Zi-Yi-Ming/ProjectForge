@@ -35,6 +35,7 @@ class ExecutionOrchestrator:
         replanner: Any | None = None,
         replan_persistence: Any | None = None,
         replan_applier: Any | None = None,
+        artifacts_root: Path | None = None,
     ) -> None:
         self.adapter = adapter
         self.validator = validator or DeterministicValidator()
@@ -46,6 +47,23 @@ class ExecutionOrchestrator:
         self.replanner = replanner
         self.replan_persistence = replan_persistence
         self.replan_applier = replan_applier
+        self.artifacts_root = artifacts_root
+
+    def _artifact_store_for(self, run_dir: Path | None, run_id: str | None) -> ArtifactStore | None:
+        """Pick where audit artifacts live.
+
+        Preference order keeps artifacts *out of the executor workspace* when
+        possible: an in-workspace ``artifacts/`` directory would be swept into
+        the per-task git checkpoint and corrupt the audit trail. Falls back to
+        the workspace only when no run root is known.
+        """
+        if self.artifact_store is not None:
+            return self.artifact_store
+        if self.artifacts_root is not None and run_id:
+            return ArtifactStore(self.artifacts_root / run_id)
+        if self.persistence is not None and run_id:
+            return ArtifactStore(self.persistence.runs_dir / run_id)
+        return ArtifactStore(run_dir) if run_dir else None
 
     def run(
         self,
@@ -62,7 +80,7 @@ class ExecutionOrchestrator:
             total_tasks=len(task_graph.tasks),
             started_at=self._now(),
         )
-        artifact_store = self.artifact_store or (ArtifactStore(run_dir) if run_dir else None)
+        artifact_store = self._artifact_store_for(run_dir, run.run_id)
         if self.persistence is not None and run_dir is not None:
             self.persistence.create_run(run)
 

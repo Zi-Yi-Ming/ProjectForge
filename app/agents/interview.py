@@ -4,7 +4,7 @@ import json
 
 import httpx
 
-from app.agents.llm_planner import LlmConfig, _extract_json
+from app.agents.llm_planner import LlmConfig, _LLM_TIMEOUT_SECONDS, _extract_json
 from app.schemas.blueprint import ProjectBlueprint, UserProfile
 from app.schemas.execution import TaskExecutionRecord
 from app.schemas.jd import JDProfile
@@ -22,7 +22,9 @@ class InterviewDocBuilder:
 
     def __init__(self, config: LlmConfig | None = None, client: httpx.Client | None = None) -> None:
         self._config = config
-        self._client = client or httpx.Client()
+        # The httpx default timeout (5s) is far too short for a real polish
+        # round-trip, which would silently fall back to the template.
+        self._client = client or httpx.Client(timeout=_LLM_TIMEOUT_SECONDS)
         self.last_polish_failed = False
         self.last_polish_error = ""
 
