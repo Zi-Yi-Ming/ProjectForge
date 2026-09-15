@@ -48,6 +48,7 @@ class Task(BaseModel):
     interview_points: list[str] = Field(default_factory=list)
     test_command: str = ""
     test_paths: list[str] = Field(default_factory=list)
+    allowed_paths: list[str] = Field(default_factory=list)
     status: TaskStatus = TaskStatus.PENDING
 
 

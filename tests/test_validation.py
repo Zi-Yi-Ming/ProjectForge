@@ -139,7 +139,11 @@ def test_deterministic_validator_fails_on_scope_violation() -> None:
         blocking_reason="",
         git_checkpoint=GitCheckpoint(),
     )
-    vr = validator.validate("T7", failing_contract, failing_result)
+    # Enforcement is mode-gated: only `enforce` turns a violation into a
+    # failure. The default (`warn`) records it without killing the task, which
+    # is covered in tests/test_scope_policy.py.
+    enforcing = DeterministicValidator(scope_mode="enforce")
+    vr = enforcing.validate("T7", failing_contract, failing_result)
     assert vr.scope_result == "SCOPE_VIOLATION"
     assert any("Scope violation" in f for f in vr.failures)
 

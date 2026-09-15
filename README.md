@@ -62,7 +62,10 @@ JD 能力画像
 
 ### 约束式执行（Constrained Execution）
 
-在 Task Contract 约束内执行任务，限制允许修改的文件、测试范围和工程边界，避免执行过程偏离目标。
+在 Task Contract 约束内执行任务。真实执行跑在 bubblewrap sandbox 里，工作区之外的文件系统是只读的，
+执行器无法越出工作区；此外任务可以声明 `allowed_paths` 来收窄可修改范围——
+声明后即按声明校验（`PROJECTFORGE_SCOPE_MODE=enforce` 时越界判失败，
+默认 `warn` 只记录不判死）。未声明 `allowed_paths` 的任务以工作区为边界。
 
 ### 验证（Validation）
 
@@ -261,6 +264,7 @@ pytest tests/test_project_core.py tests/test_workflow.py tests/test_run_control.
 - `PROJECTFORGE_RUNTIME_DIR`：运行时根目录（默认 `./.runtime`）
 - `PROJECTFORGE_TASK_TIMEOUT_SECONDS`：单任务执行器超时（默认 300 秒；最坏执行时间 = 超时 × 重试次数 3），也可用 `run start/resume --timeout` 覆盖
 - `PROJECTFORGE_LLM_BASE_URL` / `PROJECTFORGE_LLM_API_KEY` / `PROJECTFORGE_LLM_MODEL`：配置任意 OpenAI 兼容厂商后，`plan new --planner llm` 可用；不配置则 LLM planner 自动回退规则版
+- `PROJECTFORGE_SCOPE_MODE`：任务级路径约束的强制模式。`warn`（默认）只把越界记录进验证 warning，不判失败；`enforce` 才把越界判为 `SCOPE_VIOLATION`。仅对声明了 `allowed_paths` 的任务生效
 
 ## 项目状态
 

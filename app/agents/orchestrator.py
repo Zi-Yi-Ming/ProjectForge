@@ -346,9 +346,23 @@ class ExecutionOrchestrator:
         self.persistence.save_run(run)
 
     def _build_contract(self, task: Task, project_map: ProjectMap, run_dir: Path | None = None) -> TaskContract:
-        # Resolve: scope matching compares against absolute workspace paths.
-        allowed_paths = [str(Path(run_dir).resolve())] if run_dir is not None else []
+        # Scope resolution has three cases:
+        #   1. the task declared usable paths -> enforce them (+ shared files)
+        #   2. the task declared paths we cannot trust -> leave the list empty,
+        #      which the scope policy reports as NEEDS_REVIEW (never a false
+        #      violation)
+        #   3. the task declared nothing -> historical behaviour: the workspace
+        #      root is the only boundary
+        from app.agents.scope_policy import normalize_declared_paths, shared_paths_for
         from app.schemas.implementation import AllowedTestAction
+
+        declared = normalize_declared_paths(list(task.allowed_paths), run_dir)
+        if declared:
+            allowed_paths = declared + shared_paths_for(run_dir)
+        elif task.allowed_paths:
+            allowed_paths = []
+        else:
+            allowed_paths = [str(Path(run_dir).resolve())] if run_dir is not None else []
 
         test_scope = (
             [AllowedTestAction.ADD_TEST, AllowedTestAction.MODIFY_RELEVANT_TEST]

@@ -356,25 +356,18 @@ class CliAgentAdapter(CodingAgentAdapter):
             )
 
     def _evaluate_scope_from_files(self, changed_files: list[str], allowed_paths: list[str]) -> ScopeStatus:
-        if not allowed_paths:
-            return ScopeStatus.NEEDS_REVIEW
-        base = self.workspace.resolve() if self.workspace is not None else None
-        for changed in changed_files:
-            candidates = [changed]
-            if base is not None:
-                # Reporters give workspace-relative paths while contracts
-                # carry absolute allowed_paths; compare both forms.
-                candidates.append(str((base / changed).resolve()))
-            if not any(self._path_allowed(candidate, allowed) for candidate in candidates for allowed in allowed_paths):
-                return ScopeStatus.SCOPE_VIOLATION
-        return ScopeStatus.WITHIN_SCOPE
+        """Delegate to the shared policy so the adapter and the validator
+        cannot drift apart on what counts as a violation."""
+        from app.agents.scope_policy import evaluate_scope
+
+        return ScopeStatus(evaluate_scope(changed_files, allowed_paths, workspace=self.workspace))
 
     @staticmethod
     def _path_allowed(changed_path: str, allowed_path: str) -> bool:
-        # Normalize separators so resolved Windows paths compare correctly.
-        changed = changed_path.replace("\\", "/")
-        allowed = allowed_path.replace("\\", "/")
-        return changed == allowed or changed.startswith(allowed.rstrip("/") + "/")
+        """Delegate to the shared policy (kept as a public-ish shim)."""
+        from app.agents.scope_policy import path_allowed
+
+        return path_allowed(changed_path, allowed_path)
 
     @staticmethod
     def _now() -> str:

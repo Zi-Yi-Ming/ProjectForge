@@ -3,6 +3,27 @@
 All notable changes to this project are documented in this file.
 Format: Keep a Changelog; versioning: SemVer（0.x 阶段 minor = 能力/破坏性变更，patch = 修复）。
 
+## [0.5.0] - 2026-09-15
+### Added
+- **任务级路径约束（可选启用）**：`Task.allowed_paths` 可声明任务允许修改的路径。
+  声明后按声明校验（并自动放行 `requirements.txt` / `pyproject.toml` / `README.md`
+  等跨切文件与任意层级的 `__init__.py`）；未声明则维持原行为（以工作区为边界）。
+- `PROJECTFORGE_SCOPE_MODE`：`warn`（默认）只把越界记录进验证 warning、不判任务失败；
+  `enforce` 才判 `SCOPE_VIOLATION`。**分阶段上线**，避免假阳性一次摧毁约束系统的信任。
+
+### Changed
+- scope 判定逻辑抽到 `app/agents/scope_policy.py`：此前 `validator` 与 `cli_adapter`
+  各有一份实现（存在漂移风险），现统一委托，并保留薄壳以兼容既有调用。
+
+### Fixed
+- 声明路径校验漏掉 Windows 无盘符的根路径（`/abs/path` 的 `is_absolute()` 为 `False`），
+  可被解析到工作区之外；改用 `anchor` 判定，同时覆盖盘符相对路径（`C:foo`）。
+
+### Documentation
+- README 与 `docs/demo.md` 的 scope 表述改为准确描述：原先宣称"限制允许修改的文件"、
+  "越界修改会被判 SCOPE_VIOLATION"，但生产路径中 `allowed_paths` 恒为工作区根，
+  该拦截从不触发。现如实说明边界来源与 `warn`/`enforce` 的差别。
+
 ## [0.4.2] - 2026-09-14
 ### Fixed
 - **`--planner llm` 完全不可用**：`planner_factory_from_name` 把规则版 planner 的

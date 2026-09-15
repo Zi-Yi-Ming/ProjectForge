@@ -64,6 +64,8 @@ asciinema upload demo.cast
 - 任务声明 `test_paths` 后，validator 会在 workspace 里真实执行 `pytest`；
   通过时人工验收标准不再阻塞任务（`NEEDS_REVIEW` → 记入 `manual_review_items`），
   任务才能到 `DONE`
-- scope 检查把 workspace 相对路径与合同里的绝对 `allowed_paths` 做解析比对，
-  越界修改会被判 `SCOPE_VIOLATION`
+- scope 检查把 workspace 相对路径与合同里的绝对 `allowed_paths` 做解析比对。
+  任务未声明 `allowed_paths` 时以工作区为边界（工作区外的写入由 bwrap sandbox 阻断）；
+  任务声明了 `allowed_paths` 时按声明校验，越界会被判 `SCOPE_VIOLATION`——
+  是否因此判失败取决于 `PROJECTFORGE_SCOPE_MODE`（默认 `warn` 只记录，`enforce` 才判死）。
 - replan 提案必须人工 `approve` 后才能 `apply`，`forbidden_changes` 保护蓝图与架构不被执行器擅改

@@ -6,6 +6,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.agents.scope_policy import (
+    NEEDS_REVIEW,
+    SCOPE_MODE_ENFORCE,
+    SCOPE_VIOLATION,
+    WITHIN_SCOPE,
+    evaluate_scope,
+    path_allowed,
+    resolve_scope_mode,
+)
 from app.schemas.validation import (
     CriterionResult,
     CriterionStatus,
@@ -24,6 +33,10 @@ class _CommandResult:
 
 
 class DeterministicValidator:
+    def __init__(self, scope_mode: str | None = None) -> None:
+        # Explicit > env (PROJECTFORGE_SCOPE_MODE) > default (warn).
+        self.scope_mode = resolve_scope_mode(scope_mode)
+
     def validate(
         self,
         task_id: str,
@@ -71,8 +84,11 @@ class DeterministicValidator:
 
         changed_files = implementation_result.changed_files or []
         allowed_paths = task_contract.allowed_paths or []
-        scope_result = self._evaluate_scope_status(changed_files, allowed_paths, workspace=workspace)
-        if scope_result == "WITHIN_SCOPE":
+        scope_result = evaluate_scope(changed_files, allowed_paths, workspace=workspace)
+        # A violation only fails the task when enforcement is on; in warn mode
+        # it is recorded so real runs can be measured before it can kill work.
+        scope_violation_enforced = scope_result == SCOPE_VIOLATION and self.scope_mode == SCOPE_MODE_ENFORCE
+        if scope_result == WITHIN_SCOPE:
             criterion_results.append(
                 CriterionResult(
                     criterion="Scope check",
@@ -82,18 +98,18 @@ class DeterministicValidator:
                     details="Changed files are within allowed paths.",
                 )
             )
-        elif scope_result == "NEEDS_REVIEW":
+        elif scope_result == NEEDS_REVIEW:
             criterion_results.append(
                 CriterionResult(
                     criterion="Scope check",
                     type=CriterionType.FILE,
                     status=CriterionStatus.NEEDS_REVIEW,
                     evidence=",".join(changed_files),
-                    details="Some changed files may need manual review.",
+                    details="No task-level paths declared; scope could not be verified.",
                 )
             )
             warnings.append("Scope check requires manual review.")
-        else:
+        elif scope_violation_enforced:
             criterion_results.append(
                 CriterionResult(
                     criterion="Scope check",
@@ -104,6 +120,20 @@ class DeterministicValidator:
                 )
             )
             failures.append("Scope violation detected.")
+        else:
+            criterion_results.append(
+                CriterionResult(
+                    criterion="Scope check",
+                    type=CriterionType.FILE,
+                    status=CriterionStatus.NEEDS_REVIEW,
+                    evidence=",".join(changed_files),
+                    details="Changed files are outside allowed paths but enforcement is off (warn mode).",
+                )
+            )
+            warnings.append(
+                "Scope violation not enforced (PROJECTFORGE_SCOPE_MODE=warn): "
+                + ",".join(changed_files)
+            )
 
         checkpoint = getattr(implementation_result, "git_checkpoint", None)
         head_before = (checkpoint.head_before if checkpoint else "") or ""
@@ -153,7 +183,7 @@ class DeterministicValidator:
             status = ValidationStatus.FAIL
         elif any(c.status == CriterionStatus.NEEDS_REVIEW for c in criterion_results):
             status = ValidationStatus.NEEDS_REVIEW
-        if scope_result == "SCOPE_VIOLATION":
+        if scope_violation_enforced:
             status = ValidationStatus.FAIL
         if failures and status == ValidationStatus.PASS:
             status = ValidationStatus.FAIL
@@ -236,22 +266,10 @@ class DeterministicValidator:
             )
 
     def _evaluate_scope_status(self, changed_files: list[str], allowed_paths: list[str], workspace: Path | None = None) -> str:
-        if not allowed_paths:
-            return "NEEDS_REVIEW"
-        base = workspace.resolve() if workspace is not None else None
-        for changed in changed_files:
-            candidates = [changed]
-            if base is not None:
-                # Reporters give workspace-relative paths while contracts
-                # carry absolute allowed_paths; compare both forms.
-                candidates.append(str((base / changed).resolve()))
-            if not any(self._path_allowed(candidate, allowed) for candidate in candidates for allowed in allowed_paths):
-                return "SCOPE_VIOLATION"
-        return "WITHIN_SCOPE"
+        """Deprecated shim: the policy lives in app.agents.scope_policy."""
+        return evaluate_scope(changed_files, allowed_paths, workspace=workspace)
 
     @staticmethod
     def _path_allowed(changed_path: str, allowed_path: str) -> bool:
-        # Normalize separators so resolved Windows paths compare correctly.
-        changed = changed_path.replace("\\", "/")
-        allowed = allowed_path.replace("\\", "/")
-        return changed == allowed or changed.startswith(allowed.rstrip("/") + "/")
+        """Deprecated shim: the policy lives in app.agents.scope_policy."""
+        return path_allowed(changed_path, allowed_path)
