@@ -150,6 +150,87 @@ def test_event_store_respects_existing_events_on_reseed(tmp_path: Path) -> None:
     assert events[0].event_type == "PROJECT_CREATED"
 
 
+def test_event_store_id_cache_is_per_project(tmp_path: Path) -> None:
+    # Regression guard: a single instance-level id cache would leak ids across
+    # projects, so a second project's pre-existing event could be written twice.
+    first = EventStore(base_dir=tmp_path)
+    first.append(
+        ProductEvent(
+            event_id="evt-shared", event_type="STEP", project_id="proj-B",
+            timestamp="2026-01-01T00:00:00Z", actor=Actor.SYSTEM, payload={},
+        )
+    )
+    # A fresh store touches project A first, then B, on the same instance.
+    second = EventStore(base_dir=tmp_path)
+    second.append(
+        ProductEvent(
+            event_id="evt-a", event_type="STEP", project_id="proj-A",
+            timestamp="2026-01-01T00:00:00Z", actor=Actor.SYSTEM, payload={},
+        )
+    )
+    second.append(
+        ProductEvent(
+            event_id="evt-shared", event_type="STEP", project_id="proj-B",
+            timestamp="2026-01-01T00:00:00Z", actor=Actor.SYSTEM, payload={},
+        )
+    )
+    # B already had evt-shared on disk; it must not be appended again.
+    assert len(second.get_events("proj-B")) == 1
+
+
+def test_event_store_does_not_rotate_by_default(tmp_path: Path) -> None:
+    store = EventStore(base_dir=tmp_path)
+    for i in range(10):
+        store.append(
+            ProductEvent(
+                event_id=f"evt-{i}", event_type="STEP", project_id="proj-norot",
+                timestamp="2026-01-01T00:00:00Z", actor=Actor.SYSTEM, payload={"i": i},
+            )
+        )
+    events_dir = tmp_path / "proj-norot" / "events"
+    assert list(events_dir.glob("events-*.jsonl")) == []
+    assert len(store.get_events("proj-norot")) == 10
+
+
+def test_event_store_rotates_and_keeps_history(tmp_path: Path) -> None:
+    store = EventStore(base_dir=tmp_path, max_file_bytes=200)
+    n = 30
+    for i in range(n):
+        store.append(
+            ProductEvent(
+                event_id=f"evt-{i}", event_type="STEP", project_id="proj-rot",
+                timestamp=f"2026-01-01T00:00:{i:02d}Z", actor=Actor.SYSTEM, payload={"i": i},
+            )
+        )
+    # rotation happened ...
+    events_dir = tmp_path / "proj-rot" / "events"
+    assert len(list(events_dir.glob("events-*.jsonl"))) >= 1
+    # ... yet no history is lost: every shard is still read back
+    events = store.get_events("proj-rot")
+    assert len(events) == n
+    assert [e.event_id for e in events] == [f"evt-{i}" for i in range(n)]
+
+
+def test_event_store_dedupes_across_rotation(tmp_path: Path) -> None:
+    store = EventStore(base_dir=tmp_path, max_file_bytes=200)
+    for i in range(20):
+        store.append(
+            ProductEvent(
+                event_id=f"evt-{i}", event_type="STEP", project_id="proj-dedup",
+                timestamp=f"2026-01-01T00:00:{i:02d}Z", actor=Actor.SYSTEM, payload={"i": i},
+            )
+        )
+    # A fresh instance must load ids from rotated shards too, not just the active file.
+    fresh = EventStore(base_dir=tmp_path, max_file_bytes=200)
+    fresh.append(
+        ProductEvent(
+            event_id="evt-0", event_type="STEP", project_id="proj-dedup",
+            timestamp="2026-01-01T00:00:00Z", actor=Actor.SYSTEM, payload={},
+        )
+    )
+    assert len(fresh.get_events("proj-dedup")) == 20
+
+
 def test_event_store_scales_without_duplicate_lines(tmp_path: Path) -> None:
     # Many appends must yield exactly that many lines (no per-append re-read
     # growth, and no silent drops from id collisions).

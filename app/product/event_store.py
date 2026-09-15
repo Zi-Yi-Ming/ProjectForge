@@ -19,17 +19,40 @@ def new_event_id() -> str:
 
 
 class EventStore:
-    def __init__(self, base_dir: Path | None = None) -> None:
+    ACTIVE_FILENAME = "events.jsonl"
+    ROTATED_PATTERN = "events-*.jsonl"
+
+    def __init__(self, base_dir: Path | None = None, max_file_bytes: int | None = None) -> None:
         self.base_dir = base_dir or Path(".runtime/projects")
         self._lock = Lock()
-        # Lazily seeded set of known event ids for the lifetime of this store.
-        # Replacing the old per-append full-file re-read (O(n^2) total) with a
-        # one-time load + incremental updates keeps append() effectively O(1).
-        self._seen_ids: set[str] | None = None
+        # Rotation is opt-in: None keeps one ever-growing file, as before.
+        self.max_file_bytes = max_file_bytes
+        # Lazily seeded id sets, keyed *per project*. A single instance-level set
+        # would leak ids across projects, so a pre-existing event of a second
+        # project could be appended twice. One load per project (not per append)
+        # keeps append() effectively O(1) without the old O(n^2) re-read.
+        self._seen: dict[str, set[str]] = {}
 
-    def _load_seen_ids(self, path: Path) -> set[str]:
+    def _events_dir(self, project_id: str) -> Path:
+        return self.base_dir / project_id / "events"
+
+    def _shard_paths(self, project_dir: Path) -> list[Path]:
+        """Rotated shards (oldest first) plus the active file when present.
+
+        Rotated names embed a fixed-width timestamp, so lexical sort is
+        chronological.
+        """
+        shards = sorted(project_dir.glob(self.ROTATED_PATTERN))
+        active = project_dir / self.ACTIVE_FILENAME
+        if active.exists():
+            shards.append(active)
+        return shards
+
+    def _load_seen_ids(self, paths: list[Path]) -> set[str]:
         ids: set[str] = set()
-        if path.exists():
+        for path in paths:
+            if not path.exists():
+                continue
             for line in path.read_text(encoding="utf-8").splitlines():
                 try:
                     ids.add(json.loads(line).get("event_id"))
@@ -37,43 +60,56 @@ class EventStore:
                     continue
         return ids
 
+    def _rotate_if_needed(self, project_dir: Path, active: Path) -> None:
+        if not self.max_file_bytes or not active.exists():
+            return
+        try:
+            if active.stat().st_size < self.max_file_bytes:
+                return
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+            os.replace(active, project_dir / f"events-{stamp}-{secrets.token_hex(4)}.jsonl")
+        except Exception:
+            return
+
     def append(self, event: ProductEvent) -> ProductEvent:
-        project_dir = self.base_dir / event.project_id / "events"
+        project_dir = self._events_dir(event.project_id)
         project_dir.mkdir(parents=True, exist_ok=True)
-        path = project_dir / "events.jsonl"
+        active = project_dir / self.ACTIVE_FILENAME
         payload = event.model_dump()
         payload["actor"] = event.actor.value if isinstance(event.actor, Actor) else str(event.actor)
         line = json.dumps(payload, ensure_ascii=False)
         with self._lock:
-            if self._seen_ids is None:
-                self._seen_ids = self._load_seen_ids(path)
-            if event.event_id in self._seen_ids:
+            if event.project_id not in self._seen:
+                self._seen[event.project_id] = self._load_seen_ids(self._shard_paths(project_dir))
+            if event.event_id in self._seen[event.project_id]:
                 return event
-            with path.open("a", encoding="utf-8") as f:
+            with active.open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
                 f.flush()
                 os.fsync(f.fileno())
-            self._seen_ids.add(event.event_id)
+            self._seen[event.project_id].add(event.event_id)
+            self._rotate_if_needed(project_dir, active)
         return event
 
     def get_events(self, project_id: str) -> list[ProductEvent]:
-        path = self.base_dir / project_id / "events" / "events.jsonl"
-        if not path.exists():
-            return []
+        project_dir = self._events_dir(project_id)
         events: list[ProductEvent] = []
-        with path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    actor_value = data.get("actor", "SYSTEM")
-                    if isinstance(actor_value, str):
-                        data["actor"] = Actor(actor_value)
-                    events.append(ProductEvent.model_validate(data))
-                except (json.JSONDecodeError, ValueError):
-                    continue
+        # Read every shard: rotated history must stay visible, otherwise
+        # rotation would silently hide older events.
+        for path in self._shard_paths(project_dir):
+            with path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        actor_value = data.get("actor", "SYSTEM")
+                        if isinstance(actor_value, str):
+                            data["actor"] = Actor(actor_value)
+                        events.append(ProductEvent.model_validate(data))
+                    except (json.JSONDecodeError, ValueError):
+                        continue
         # Stable sort on timestamp only: ties keep append order, which is the
         # event log's source of truth (ids are not order-significant).
         events.sort(key=lambda e: e.timestamp)

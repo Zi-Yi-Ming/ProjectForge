@@ -46,11 +46,21 @@ Format: Keep a Changelog; versioning: SemVer（0.x 阶段 minor = 能力/破坏�
   因属破坏性操作，**默认关闭**：`ExecutionOrchestrator(rollback_on_failure=True)` 或
   env `PROJECTFORGE_ROLLBACK_ON_FAILURE=1|true|yes` 显式启用。
 - **`EventStore` 去掉 O(n²)**：`append` 原每次重读整个 jsonl 建 id 集（n 大时 O(n²)），
-  改为实例级惰性 id 缓存 + 增量更新。保留幂等去重，并补测"换实例重开仍能对既有事件去重"。
+  改为惰性 id 缓存 + 增量更新。保留幂等去重，并补测"换实例重开仍能对既有事件去重"。
+- **事件日志滚动**：活跃文件超过 `max_file_bytes` 即切为 `events-<时间戳>-<hex>.jsonl` 分片，
+  活跃文件重新起头；`get_events` 会读取**全部分片**，故滚动不会隐藏历史。
+  同样**默认关闭**（会改变磁盘布局）：`EventStore(max_file_bytes=...)` 或
+  env `PROJECTFORGE_EVENT_MAX_FILE_BYTES`。（日志按 run 分片未做，留待后续。）
 - **主循环加全局时长预算**：`ExecutionOrchestrator(max_run_seconds=...)`，主循环以
   `time.monotonic()` 卡预算，超限即以 `TIME_BUDGET_EXCEEDED` 收束（与用户 `CANCELLED` 区分）。
   默认 `None` 维持原不受限行为，属**显式启用**；配套 env `PROJECTFORGE_MAX_RUN_SECONDS`
   （`resolve_max_run_seconds()`，未设/非法值即不受限），无需改代码即可打开闸门。
+
+### Fixed（自查中揪出的回归）
+- **事件 id 缓存跨项目串味**：上一项把 id 集做成**实例级**单集，虽换掉了 O(n²)，
+  却引入新 bug——同一实例先碰项目 A 再碰 B 时，B 不会加载自己的磁盘事件，
+  导致 B 既有的 event_id 被**重复写入**。改为按项目键控 `dict[project_id, set]`。
+  已补针对性测试，并做 RED 校验（还原旧行为时该测试确实失败，报错为 `2 == 1`）。
 
 ### 核实后未改动的项
 - `ArtifactStore.list_for_task` 的"T1 匹配 T10_x"**实测不重现**：现有实现用

@@ -5,6 +5,7 @@ import pytest
 from app.product.service import (
     DEFAULT_TASK_TIMEOUT_SECONDS,
     ProjectService,
+    resolve_event_max_file_bytes,
     resolve_max_run_seconds,
     resolve_rollback_on_failure,
     resolve_task_timeout,
@@ -29,6 +30,22 @@ def test_env_overrides_default(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_invalid_env_falls_back_to_default(monkeypatch: pytest.MonkeyPatch, bad: str) -> None:
     monkeypatch.setenv("PROJECTFORGE_TASK_TIMEOUT_SECONDS", bad)
     assert resolve_task_timeout() == DEFAULT_TASK_TIMEOUT_SECONDS
+
+
+def test_event_max_file_bytes_unset_means_no_rotation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PROJECTFORGE_EVENT_MAX_FILE_BYTES", raising=False)
+    assert resolve_event_max_file_bytes() is None
+
+
+def test_event_max_file_bytes_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROJECTFORGE_EVENT_MAX_FILE_BYTES", "1048576")
+    assert resolve_event_max_file_bytes() == 1048576
+
+
+@pytest.mark.parametrize("bad", ["abc", "0", "-1", ""])
+def test_event_max_file_bytes_invalid_is_no_rotation(monkeypatch: pytest.MonkeyPatch, bad: str) -> None:
+    monkeypatch.setenv("PROJECTFORGE_EVENT_MAX_FILE_BYTES", bad)
+    assert resolve_event_max_file_bytes() is None
 
 
 def test_service_passes_timeout_to_executor_factory(tmp_path) -> None:

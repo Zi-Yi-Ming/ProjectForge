@@ -136,6 +136,24 @@ def resolve_max_run_seconds() -> float | None:
     return None
 
 
+def resolve_event_max_file_bytes() -> int | None:
+    """Per-project event log rotation threshold: env > None (no rotation).
+
+    Off by default: rotation changes the on-disk layout (extra ``events-*.jsonl``
+    shards), so it is opt-in via PROJECTFORGE_EVENT_MAX_FILE_BYTES.
+    """
+    raw = os.environ.get("PROJECTFORGE_EVENT_MAX_FILE_BYTES", "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+        if value > 0:
+            return value
+    except ValueError:
+        pass
+    return None
+
+
 def resolve_rollback_on_failure() -> bool:
     """Whether a failed task's partial work is discarded: env > False.
 
@@ -152,7 +170,9 @@ class ProjectService:
         self.base_dir = resolve_base_dir(base_dir)
         self.task_timeout = resolve_task_timeout(task_timeout)
         self.persistence = persistence or ProjectPersistence(base_dir=self.base_dir / "projects")
-        self.event_store = event_store or EventStore(base_dir=self.base_dir / "projects")
+        self.event_store = event_store or EventStore(
+            base_dir=self.base_dir / "projects", max_file_bytes=resolve_event_max_file_bytes()
+        )
         self._active_runs: dict[str, str] = {}
         self._executor_factory = executor_factory
         self.run_control = run_control or RunControl(execution_persistence=JsonExecutionPersistence(base_dir=self.base_dir), persistence=self.persistence)
