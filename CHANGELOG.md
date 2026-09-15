@@ -3,6 +3,23 @@
 All notable changes to this project are documented in this file.
 Format: Keep a Changelog; versioning: SemVer（0.x 阶段 minor = 能力/破坏性变更，patch = 修复）。
 
+## [0.5.1] - 2026-09-15
+### Added
+- **scope 生产者落地（步骤 ③）**：`LlmPlanner` 现在在 system prompt 中要求 LLM 为每个任务产出
+  `allowed_paths`（相对目录、禁用绝对路径与 `..`），并经过 `normalize_declared_paths` 做语法校验后
+  写入 `Task.allowed_paths`。此前该字段虽已在 schema 中存在，但 LLM 路径从不产出 → 约束机制就位却
+  从未被真实触发。编排器 `_build_contract` 消费该字段：声明且可用 → 按声明校验（叠加共享文件）；
+  声明但不可信 → 留空（scope policy 判 `NEEDS_REVIEW`，**不可验证绝不等于违规**）；未声明 → 维持
+  工作区根为唯一边界的历史行为。
+
+### Fixed
+- **warn 模式被聚合器悄悄推翻**：`ValidationAggregator` 曾经直接从 `deterministic_result.scope_result`
+  重算 `scope_violation → FAIL`，导致即便 `PROJECTFORGE_SCOPE_MODE=warn` 也会把任务判失败，使"先观察、
+  再强制"的分阶段上线形同虚设。改为：判定标准的唯一来源是 validator 产出的 criteria，scope 是否在
+  warn 下失败由 validator 据 `SCOPE_MODE` 自行决定（仅 enforce 才发 FAIL criterion）。
+- **warn 模式误伤任务**：validator 在 warn 下原先对越界发出 `NEEDS_REVIEW` criterion（仍会阻断任务），
+  与"观察期不判死"矛盾。改为只把越界写进 `warnings` / `evidence`，由真实运行先收集假阳性率，再切 enforce。
+
 ## [0.5.0] - 2026-09-15
 ### Added
 - **任务级路径约束（可选启用）**：`Task.allowed_paths` 可声明任务允许修改的路径。

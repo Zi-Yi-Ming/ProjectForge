@@ -48,11 +48,15 @@ class ValidationAggregator:
                     )
                 )
 
+        # The criteria are the single source of truth for the verdict. Scope in
+        # particular is *not* re-derived from `scope_result` here: the validator
+        # owns that decision (it knows PROJECTFORGE_SCOPE_MODE) and already
+        # emits a FAIL criterion when enforcement is on. Re-deriving it here
+        # silently overrode warn mode and failed tasks it was meant to spare.
         hard_failure = any(c.status == "FAIL" for c in merged_criteria)
         needs_review = any(c.status == "NEEDS_REVIEW" for c in merged_criteria)
-        scope_violation = deterministic_result.scope_result == "SCOPE_VIOLATION"
 
-        if hard_failure or scope_violation:
+        if hard_failure:
             status = ValidationStatus.FAIL
         elif needs_review:
             status = ValidationStatus.NEEDS_REVIEW

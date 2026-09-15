@@ -28,6 +28,11 @@ from app.schemas.validation import (
 
 
 validator = DeterministicValidator()
+# Enforcing twin: the aggregator tests below assert that a scope violation
+# fails the aggregated result. That is *enforcement* behavior, so they must
+# run the validator in enforce mode rather than rely on the aggregator to
+# re-derive scope -> FAIL (it no longer does; the validator owns that call).
+enforcing_validator = DeterministicValidator(scope_mode="enforce")
 aggregator = ValidationAggregator()
 
 
@@ -187,7 +192,7 @@ def test_deterministic_validator_deterministic_same_inputs() -> None:
 # =========================
 
 def test_aggregator_deterministic_fail_produces_fail() -> None:
-    deterministic = validator.validate("T7", _contract(), _result_failing())
+    deterministic = enforcing_validator.validate("T7", _contract(), _result_failing())
     result, feedback = aggregator.aggregate(_contract(), _result_failing(), deterministic)
     assert result.status == ValidationStatus.FAIL
     assert feedback is not None
@@ -205,7 +210,7 @@ def test_aggregator_deterministic_pass_without_llm() -> None:
 
 
 def test_aggregator_llm_needs_review_does_not_override_deterministic_fail() -> None:
-    deterministic = validator.validate("T7", _contract(), _result_failing())
+    deterministic = enforcing_validator.validate("T7", _contract(), _result_failing())
     llm = LLMReviewResult(
         status=ValidationStatus.NEEDS_REVIEW,
         findings=[LLMReviewFinding(severity="LOW", criterion="style", evidence="line 1")],
@@ -231,13 +236,13 @@ def test_aggregator_needs_review_when_manual_criteria_exist() -> None:
 
 
 def test_aggregator_scope_violation_becomes_fail() -> None:
-    deterministic = validator.validate("T7", _contract(), _result_failing())
+    deterministic = enforcing_validator.validate("T7", _contract(), _result_failing())
     result, feedback = aggregator.aggregate(_contract(), _result_failing(), deterministic)
     assert result.status == ValidationStatus.FAIL
 
 
 def test_aggregator_feedback_contains_required_and_forbidden_changes() -> None:
-    deterministic = validator.validate("T7", _contract(), _result_failing())
+    deterministic = enforcing_validator.validate("T7", _contract(), _result_failing())
     result, feedback = aggregator.aggregate(_contract(), _result_failing(), deterministic)
     assert feedback is not None
     assert feedback.forbidden_changes == ["distributed transaction", "cross-service idempotency"]
@@ -256,7 +261,7 @@ def test_acceptance_criteria_become_manual_criterion_results() -> None:
 def test_single_failed_criterion_causes_fail() -> None:
     failing_contract = _contract()
     failing_contract.acceptance_criteria = ["c1", "c2"]
-    deterministic = validator.validate("T7", failing_contract, _result_failing())
+    deterministic = enforcing_validator.validate("T7", failing_contract, _result_failing())
     result, _ = aggregator.aggregate(failing_contract, _result_failing(), deterministic)
     assert result.status == ValidationStatus.FAIL
 
@@ -310,7 +315,7 @@ def test_pre_existing_changes_tracked_in_implementation_result() -> None:
 # =========================
 
 def test_llm_pass_cannot_override_deterministic_test_fail() -> None:
-    deterministic = validator.validate("T7", _contract(), _result_failing())
+    deterministic = enforcing_validator.validate("T7", _contract(), _result_failing())
     llm = LLMReviewResult(
         status=ValidationStatus.PASS,
         findings=[],
@@ -325,7 +330,7 @@ def test_llm_pass_cannot_override_deterministic_test_fail() -> None:
 # =========================
 
 def test_failed_validation_generates_feedback() -> None:
-    deterministic = validator.validate("T7", _contract(), _result_failing())
+    deterministic = enforcing_validator.validate("T7", _contract(), _result_failing())
     result, feedback = aggregator.aggregate(_contract(), _result_failing(), deterministic)
     assert result.status == ValidationStatus.FAIL
     assert feedback is not None

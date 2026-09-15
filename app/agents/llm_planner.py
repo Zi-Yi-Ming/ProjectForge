@@ -32,11 +32,14 @@ SYSTEM_PROMPT = """你是资深软件工程导师，负责把岗位 JD 转化为
   },
   "tasks": [
     {"id": "T1", "title": "...", "goal": "...", "why": "...", "dependencies": ["T1"],
-     "scope": "Core", "acceptance_criteria": ["可验证的标准"], "technical_points": [...], "interview_points": [...]}
+     "scope": "Core", "acceptance_criteria": ["可验证的标准"], "technical_points": [...], "interview_points": [...],
+     "allowed_paths": ["src/", "tests/"]}
   ]
 }
 约束：tasks 数量 6 到 12；scope 只能取 Core / JD Alignment / Engineering Depth / Advanced 四档之一，按档位从易到难排序；
 dependencies 只能引用 tasks 中已有的 id，且不得成环；每个任务至少一条可验证的 acceptance_criteria；
+allowed_paths 是该任务允许修改的相对路径列表，用**目录**（如 "src/"、"tests/"）而不是具体文件名，
+不得使用绝对路径或 ".."，不确定时留空数组 []；
 所有文字用中文；除这个 JSON 对象外不要输出任何内容。"""
 
 _MAX_JD_CHARS = 8000
@@ -101,12 +104,18 @@ def _build_result(data: dict[str, Any]) -> PlanningResult:
     ids = {t["id"] for t in raw_tasks}
     if len(ids) != len(raw_tasks):
         raise ValueError("duplicate task ids in LLM output")
+    # Path validation is syntactic here: the planner runs before any workspace
+    # exists, so it can only reject absolute paths and ".." — the workspace
+    # binding happens later in the orchestrator's contract builder.
+    from app.agents.scope_policy import normalize_declared_paths
+
     tasks: list[Task] = []
     for t in raw_tasks:
         deps = [dep for dep in t.get("dependencies", []) if dep in ids and dep != t["id"]]
         scope_label = t.get("scope", "Core")
         if scope_label not in allowed_scope_labels:
             scope_label = "Core"
+        declared = normalize_declared_paths(list(t.get("allowed_paths") or []), None)
         tasks.append(
             Task(
                 id=t["id"],
@@ -121,6 +130,7 @@ def _build_result(data: dict[str, Any]) -> PlanningResult:
                 technical_points=list(t.get("technical_points", [])),
                 interview_points=list(t.get("interview_points", [])),
                 test_paths=["tests"],
+                allowed_paths=declared,
                 status=TaskStatus.PENDING,
             )
         )

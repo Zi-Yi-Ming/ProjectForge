@@ -1,6 +1,8 @@
 .venv/
 .env
 .env.*
+.workbuddy-ai/
+.agent-memory/
 __pycache__/
 *.pyc
 .pytest_cache/

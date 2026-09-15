@@ -121,19 +121,16 @@ class DeterministicValidator:
             )
             failures.append("Scope violation detected.")
         else:
-            criterion_results.append(
-                CriterionResult(
-                    criterion="Scope check",
-                    type=CriterionType.FILE,
-                    status=CriterionStatus.NEEDS_REVIEW,
-                    evidence=",".join(changed_files),
-                    details="Changed files are outside allowed paths but enforcement is off (warn mode).",
-                )
-            )
+            # warn mode: observe without judging. Emitting a NEEDS_REVIEW
+            # criterion here would still change the task's outcome (NEEDS_REVIEW
+            # blocks the task), which would defeat the point of measuring false
+            # positives before switching enforcement on. The observation is
+            # recorded in warnings/evidence instead.
             warnings.append(
                 "Scope violation not enforced (PROJECTFORGE_SCOPE_MODE=warn): "
                 + ",".join(changed_files)
             )
+            evidence.append(f"scope_violation_would_be={changed_files}")
 
         checkpoint = getattr(implementation_result, "git_checkpoint", None)
         head_before = (checkpoint.head_before if checkpoint else "") or ""

@@ -263,6 +263,112 @@ def test_contract_keeps_workspace_root_when_nothing_declared(tmp_path: Path) -> 
     assert contract.allowed_paths == [str(tmp_path.resolve())]
 
 
+# --- end-to-end through the aggregator (the real decision path) ---
+#
+# Testing the validator alone is not enough: the orchestrator consumes the
+# *aggregated* result, and the aggregator used to re-derive scope from
+# `scope_result` and force FAIL — silently overriding warn mode. These tests
+# walk validator + aggregator together so that class of gap cannot recur.
+
+
+def _aggregated(mode: str, allowed_paths: list[str], changed: list[str], tmp_path: Path):
+    from app.agents.validation_aggregator import ValidationAggregator
+
+    contract = _contract(allowed_paths)
+    result = _result(changed)
+    deterministic = DeterministicValidator(scope_mode=mode).validate(
+        "T1", contract, result, workspace=tmp_path
+    )
+    aggregated, _feedback = ValidationAggregator().aggregate(contract, result, deterministic)
+    return deterministic, aggregated
+
+
+def test_warn_mode_survives_the_aggregator(tmp_path: Path) -> None:
+    """The regression: warn mode must not be overridden downstream."""
+    deterministic, aggregated = _aggregated(
+        SCOPE_MODE_WARN, [str((tmp_path / "src").resolve())], ["docs/a.md"], tmp_path
+    )
+    assert deterministic.scope_result == SCOPE_VIOLATION
+    assert aggregated.status != ValidationStatus.FAIL
+    assert any("not enforced" in item for item in aggregated.warnings)
+
+
+def test_enforce_mode_fails_through_the_aggregator(tmp_path: Path) -> None:
+    _deterministic, aggregated = _aggregated(
+        SCOPE_MODE_ENFORCE, [str((tmp_path / "src").resolve())], ["docs/a.md"], tmp_path
+    )
+    assert aggregated.status == ValidationStatus.FAIL
+
+
+def test_compliant_change_passes_in_both_modes(tmp_path: Path) -> None:
+    for mode in (SCOPE_MODE_WARN, SCOPE_MODE_ENFORCE):
+        _deterministic, aggregated = _aggregated(
+            mode, [str((tmp_path / "src").resolve())], ["src/a.py"], tmp_path
+        )
+        assert aggregated.status == ValidationStatus.PASS
+
+
+# --- producers ---
+
+
+def _llm_payload(task_extra: dict) -> dict:
+    task = {
+        "id": "T1",
+        "title": "t",
+        "goal": "g",
+        "why": "w",
+        "dependencies": [],
+        "scope": "Core",
+        "acceptance_criteria": ["ok"],
+        "technical_points": [],
+        "interview_points": [],
+    }
+    task.update(task_extra)
+    return {
+        "blueprint": {
+            "name": "proj",
+            "one_line_description": "d",
+            "business_domain": "电商",
+            "project_type": "original",
+            "selected_scope": "Core",
+        },
+        "tasks": [task],
+    }
+
+
+def test_llm_planner_keeps_valid_declared_paths() -> None:
+    from app.agents.llm_planner import _build_result
+
+    result = _build_result(_llm_payload({"allowed_paths": ["src/", "tests/"]}))
+    assert result.task_graph.tasks[0].allowed_paths == ["src", "tests"]
+
+
+def test_llm_planner_drops_untrustworthy_declared_paths() -> None:
+    """Absolute paths and ".." must never reach the contract."""
+    from app.agents.llm_planner import _build_result
+
+    result = _build_result(
+        _llm_payload({"allowed_paths": ["/etc/passwd", "../escape/", "src/"]})
+    )
+    assert result.task_graph.tasks[0].allowed_paths == ["src"]
+
+
+def test_llm_planner_tolerates_missing_declaration() -> None:
+    from app.agents.llm_planner import _build_result
+
+    result = _build_result(_llm_payload({}))
+    assert result.task_graph.tasks[0].allowed_paths == []
+
+
+def test_rule_planner_declares_nothing(tmp_path: Path) -> None:
+    """The rule planner has no knowledge of the project's file layout, so it
+    must not invent one. Declaring nothing keeps the historical behaviour."""
+    from app.agents.planner import RuleBasedPlanner
+
+    result = RuleBasedPlanner().plan("Java 后端开发实习生：Java, Spring Boot, MySQL")
+    assert all(task.allowed_paths == [] for task in result.task_graph.tasks)
+
+
 # --- the two callers must agree ---
 
 
