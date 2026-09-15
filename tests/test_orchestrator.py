@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -31,7 +32,13 @@ from app.schemas.persistence import Artifact, ArtifactType
 from app.schemas.research import GitHubInfo, ResearchOutput
 from app.schemas.scoring import RepositoryScore
 from app.schemas.task import Task, TaskGraph, TaskGraphValidation, TaskStatus
-from app.schemas.validation import ValidationResult, ValidationStatus
+from app.schemas.validation import (
+    CriterionResult,
+    CriterionStatus,
+    CriterionType,
+    ValidationResult,
+    ValidationStatus,
+)
 
 
 matcher = ProjectMatcher()
@@ -354,6 +361,81 @@ def test_orchestrator_e2e_with_real_task_graph() -> None:
     assert len(run.completed_tasks) == run.total_tasks
 
 
+class _FailValidator(DeterministicValidator):
+    """Forces every task to fail validation (the trigger for rollback)."""
+
+    def validate(self, task_id, task_contract, implementation_result, workspace=None):
+        return ValidationResult(
+            task_id=task_id,
+            status=ValidationStatus.FAIL,
+            criterion_results=[
+                CriterionResult(
+                    criterion="forced failure",
+                    type=CriterionType.MANUAL,
+                    status=CriterionStatus.FAIL,
+                    evidence="",
+                    details="always fails",
+                )
+            ],
+            test_results=[],
+            scope_result="WITHIN_SCOPE",
+            changed_files=[],
+            evidence=[],
+            failures=["forced failure"],
+            warnings=[],
+            manual_review_items=[],
+            llm_review=None,
+            repair_cycle=0,
+            validated_at="",
+        )
+
+
+class _WritingAdapter(CodingAgentAdapter):
+    """Leaves partial work in the workspace, then reports success (it will then
+    fail validation — exactly the "half-finished attempt" case)."""
+
+    def __init__(self, workspace: Path, filename: str = "partial.txt") -> None:
+        self.workspace = workspace
+        self.filename = filename
+
+    def execute(self, task_contract: TaskContract, project_map: ProjectMap) -> AgentExecutionResult:
+        (self.workspace / self.filename).write_text("half-finished work", encoding="utf-8")
+        return AgentExecutionResult(
+            task_id=task_contract.task_id,
+            agent="mock",
+            status=ImplExecutionStatus.IMPLEMENTED,
+            iterations=1,
+            changed_files=[self.filename],
+            scope_status=ScopeStatus.WITHIN_SCOPE,
+            test_results=[],
+            summary="wrote partial work",
+            errors=[],
+            blocking_reason="",
+            git_checkpoint=GitCheckpoint(),
+        )
+
+
+def _init_workspace_repo(path: Path) -> str:
+    """Create a git repo with one baseline commit; return the baseline HEAD."""
+    path.mkdir(parents=True, exist_ok=True)
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args], cwd=str(path), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True
+        )
+
+    git("init", "-q")
+    git("config", "user.email", "t@local")
+    git("config", "user.name", "T")
+    (path / "README.md").write_text("baseline\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "baseline")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(path), stdout=subprocess.PIPE, check=True
+    )
+    return head.stdout.decode("utf-8").strip()
+
+
 def test_run_stops_when_time_budget_exceeded() -> None:
     # ⑥g: a run must be bounded by a wall-clock budget. A zero-second budget is
     # already exhausted on the first iteration.
@@ -376,6 +458,62 @@ def test_run_unbounded_by_default() -> None:
     orchestrator = ExecutionOrchestrator(adapter=adapter, validator=_PassValidator())
     run = orchestrator.run(graph, ProjectMap())
     assert run.status == ExecutionStatus.COMPLETED
+
+
+def test_rollback_discards_failed_task_partial_work(tmp_path: Path) -> None:
+    # P2 checkpoint rollback: a failed task must not poison the next task's
+    # foundation. Enabled explicitly, the workspace returns to its pre-task state.
+    workspace = tmp_path / "ws"
+    baseline = _init_workspace_repo(workspace)
+    (workspace / "artifacts").mkdir()
+
+    orchestrator = ExecutionOrchestrator(
+        adapter=_WritingAdapter(workspace),
+        validator=_FailValidator(),
+        rollback_on_failure=True,
+    )
+    orchestrator.run(_linear_graph(), ProjectMap(), run_dir=workspace)
+
+    assert not (workspace / "partial.txt").exists()
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(workspace), stdout=subprocess.PIPE
+    ).stdout.decode().strip()
+    assert head == baseline
+
+
+def test_rollback_off_leaves_partial_work_by_default(tmp_path: Path) -> None:
+    # Default is off: rolling back is destructive, so it must be opted into.
+    # Without it a failed task's half-finished changes stay in the workspace.
+    workspace = tmp_path / "ws"
+    _init_workspace_repo(workspace)
+
+    orchestrator = ExecutionOrchestrator(
+        adapter=_WritingAdapter(workspace), validator=_FailValidator()
+    )
+    orchestrator.run(_linear_graph(), ProjectMap(), run_dir=workspace)
+
+    assert (workspace / "partial.txt").exists()
+
+
+def test_rollback_preserves_artifacts_directory(tmp_path: Path) -> None:
+    # Audit artifacts may live inside the workspace; rolling back must not delete
+    # them even though they are untracked.
+    workspace = tmp_path / "ws"
+    _init_workspace_repo(workspace)
+    (workspace / "artifacts").mkdir()
+    (workspace / "artifacts" / "audit.json").write_text("{}", encoding="utf-8")
+
+    orchestrator = ExecutionOrchestrator(
+        adapter=_WritingAdapter(workspace),
+        validator=_FailValidator(),
+        rollback_on_failure=True,
+    )
+    orchestrator.run(_linear_graph(), ProjectMap(), run_dir=workspace)
+
+    # rollback really happened (partial work is gone) ...
+    assert not (workspace / "partial.txt").exists()
+    # ... yet the audit artifacts survived it
+    assert (workspace / "artifacts" / "audit.json").exists()
 
 
 def test_retry_attempts_produce_distinct_artifacts(tmp_path: Path) -> None:

@@ -136,6 +136,17 @@ def resolve_max_run_seconds() -> float | None:
     return None
 
 
+def resolve_rollback_on_failure() -> bool:
+    """Whether a failed task's partial work is discarded: env > False.
+
+    Off by default: rolling back runs ``git reset --hard`` plus a working-tree
+    clean, which is destructive. Enable explicitly via
+    PROJECTFORGE_ROLLBACK_ON_FAILURE=1|true|yes.
+    """
+    raw = os.environ.get("PROJECTFORGE_ROLLBACK_ON_FAILURE", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 class ProjectService:
     def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None, executor_factory: Any = None, base_dir: Path | None = None, task_timeout: int | None = None) -> None:
         self.base_dir = resolve_base_dir(base_dir)
@@ -169,6 +180,7 @@ class ProjectService:
             artifacts_root=self.base_dir / "runs",
             validator=DeterministicValidator(self_test_timeout=self.task_timeout),
             max_run_seconds=resolve_max_run_seconds(),
+            rollback_on_failure=resolve_rollback_on_failure(),
         )
 
     def _auto_run_dir(self, project_id: str) -> Path:

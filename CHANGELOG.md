@@ -39,6 +39,12 @@ Format: Keep a Changelog; versioning: SemVer（0.x 阶段 minor = 能力/破坏�
   （含自测）。（注：经 service 走的自测预算随之由 120s 变为配置的 task_timeout，默认 300s。）
 
 ### Added
+- **检查点回滚（让"失败"真正可逆）**：git checkpoint 原已建好基线/逐任务提交/validator GIT 判据，
+  但失败后工作区仍躺着半成品，后续任务在污染的地基上继续。现在任务判 `FAILED` 时
+  （执行异常 / 执行结果非 IMPLEMENTED / 验证 FAIL 三条路径）回到该任务开始前的 HEAD：
+  `git reset --hard <head_before>` + `git clean -fd -e artifacts`（**保留审计产物**）。
+  因属破坏性操作，**默认关闭**：`ExecutionOrchestrator(rollback_on_failure=True)` 或
+  env `PROJECTFORGE_ROLLBACK_ON_FAILURE=1|true|yes` 显式启用。
 - **`EventStore` 去掉 O(n²)**：`append` 原每次重读整个 jsonl 建 id 集（n 大时 O(n²)），
   改为实例级惰性 id 缓存 + 增量更新。保留幂等去重，并补测"换实例重开仍能对既有事件去重"。
 - **主循环加全局时长预算**：`ExecutionOrchestrator(max_run_seconds=...)`，主循环以

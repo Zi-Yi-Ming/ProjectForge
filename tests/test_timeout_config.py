@@ -6,6 +6,7 @@ from app.product.service import (
     DEFAULT_TASK_TIMEOUT_SECONDS,
     ProjectService,
     resolve_max_run_seconds,
+    resolve_rollback_on_failure,
     resolve_task_timeout,
 )
 
@@ -79,3 +80,21 @@ def test_build_executor_passes_max_run_seconds(tmp_path, monkeypatch: pytest.Mon
     service = ProjectService(base_dir=tmp_path, executor_factory=lambda d, t: None)
     orchestrator = service._build_executor(tmp_path / "ws")
     assert orchestrator.max_run_seconds == 1234.0
+
+
+def test_rollback_on_failure_defaults_to_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Destructive (git reset --hard + clean): must be off unless asked for.
+    monkeypatch.delenv("PROJECTFORGE_ROLLBACK_ON_FAILURE", raising=False)
+    assert resolve_rollback_on_failure() is False
+
+
+@pytest.mark.parametrize("truthy", ["1", "true", "TRUE", "yes", "on"])
+def test_rollback_on_failure_truthy_values(monkeypatch: pytest.MonkeyPatch, truthy: str) -> None:
+    monkeypatch.setenv("PROJECTFORGE_ROLLBACK_ON_FAILURE", truthy)
+    assert resolve_rollback_on_failure() is True
+
+
+@pytest.mark.parametrize("falsy", ["0", "false", "no", "", "random"])
+def test_rollback_on_failure_falsy_values(monkeypatch: pytest.MonkeyPatch, falsy: str) -> None:
+    monkeypatch.setenv("PROJECTFORGE_ROLLBACK_ON_FAILURE", falsy)
+    assert resolve_rollback_on_failure() is False

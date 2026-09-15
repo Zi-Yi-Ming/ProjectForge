@@ -39,6 +39,7 @@ class ExecutionOrchestrator:
         replan_applier: Any | None = None,
         artifacts_root: Path | None = None,
         max_run_seconds: float | None = None,
+        rollback_on_failure: bool = False,
     ) -> None:
         self.adapter = adapter
         self.validator = validator or DeterministicValidator()
@@ -55,6 +56,11 @@ class ExecutionOrchestrator:
         # worst-case ~3h with no gate. None keeps the previous unbounded behavior,
         # so opting in is required.
         self.max_run_seconds = max_run_seconds
+        # P2 checkpoint rollback: discarding a failed task's partial work is
+        # destructive (git reset --hard + clean), so it is opt-in. When off, a
+        # failed task leaves its half-finished changes in the workspace and the
+        # next task builds on a dirty foundation — the historical behavior.
+        self.rollback_on_failure = rollback_on_failure
 
     def _artifact_store_for(self, run_dir: Path | None, run_id: str | None) -> ArtifactStore | None:
         """Pick where audit artifacts live.
@@ -151,6 +157,9 @@ class ExecutionOrchestrator:
             if self.persistence is not None:
                 self._persist_task_state(run, next_task, started_at=None)
             started_at = self._now()
+            # Snapshot the workspace before the task runs so a failure can be
+            # rolled back to it (only when rollback is enabled).
+            head_before_task = self._git_head(run_dir)
 
             try:
                 execution_result = self.adapter.execute(contract, project_map)
@@ -178,6 +187,7 @@ class ExecutionOrchestrator:
                         ),
                         str(exc),
                     )
+                self._maybe_rollback(run_dir, head_before_task, next_task.status)
                 self.scheduler.update_states(task_graph)
                 if self.persistence is not None:
                     self.persistence.save_run(run)
@@ -211,6 +221,7 @@ class ExecutionOrchestrator:
                         ),
                         json.dumps(execution_result.model_dump(), ensure_ascii=False, indent=2),
                     )
+                self._maybe_rollback(run_dir, head_before_task, next_task.status)
                 self.scheduler.update_states(task_graph)
                 if self.persistence is not None:
                     self.persistence.save_run(run)
@@ -268,6 +279,7 @@ class ExecutionOrchestrator:
                         ),
                         json.dumps(execution_result.git_checkpoint.model_dump(), ensure_ascii=False, indent=2),
                     )
+            self._maybe_rollback(run_dir, head_before_task, next_task.status)
             self.scheduler.update_states(task_graph)
             if self.persistence is not None:
                 self.persistence.save_run(run)
@@ -359,6 +371,62 @@ class ExecutionOrchestrator:
         if self.max_run_seconds is None:
             return False
         return (time.monotonic() - started) >= self.max_run_seconds
+
+    @staticmethod
+    def _git_head(run_dir: Path | None) -> str:
+        """Current workspace HEAD, or "" when unavailable (no git / no commits)."""
+        import subprocess
+
+        if run_dir is None:
+            return ""
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(run_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60,
+            )
+            if proc.returncode != 0:
+                return ""
+            return proc.stdout.decode("utf-8", "replace").strip()
+        except Exception:
+            return ""
+
+    def _rollback_workspace(self, run_dir: Path | None, head_before: str) -> None:
+        """Return the workspace to its pre-task state after a failure.
+
+        Best-effort and never raises: a git-less workspace simply keeps its dirty
+        state. Untracked files are removed so the next task does not build on a
+        half-finished attempt — except ``artifacts/``, which holds audit data and
+        may legitimately live inside the workspace.
+        """
+        import subprocess
+
+        if run_dir is None or not head_before:
+            return
+        try:
+            subprocess.run(
+                ["git", "reset", "--hard", head_before],
+                cwd=str(run_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60,
+            )
+            subprocess.run(
+                ["git", "clean", "-fd", "-e", "artifacts"],
+                cwd=str(run_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60,
+            )
+        except Exception:
+            return
+
+    def _maybe_rollback(self, run_dir: Path | None, head_before: str, task_status: TaskStatus) -> None:
+        """Discard a failed task's partial work when rollback is enabled."""
+        if self.rollback_on_failure and task_status == TaskStatus.FAILED:
+            self._rollback_workspace(run_dir, head_before)
 
     @staticmethod
     def _unique_artifact_id(task_id: str, kind: str) -> str:
