@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import sys
+from datetime import datetime
 from pathlib import Path
 
 import json
@@ -9,6 +12,7 @@ from app.agents.validation_aggregator import ValidationAggregator
 from app.agents.validator import DeterministicValidator
 from app.schemas.implementation import (
     AgentExecutionResult,
+    AllowedTestAction,
     ExecutionStatus,
     GitCheckpoint,
     ProjectMap,
@@ -389,4 +393,56 @@ def test_p13_does_not_trust_p12_status_directly() -> None:
 def test_deterministic_validator_deterministic() -> None:
     first = validator.validate("T7", _contract(), _result_passing())
     second = validator.validate("T7", _contract(), _result_passing())
-    assert first.model_dump() == second.model_dump()
+    # validated_at is a wall-clock timestamp and is not part of the validation
+    # logic, so it is excluded from the determinism check.
+    first_dump = first.model_dump()
+    second_dump = second.model_dump()
+    first_dump.pop("validated_at", None)
+    second_dump.pop("validated_at", None)
+    assert first_dump == second_dump
+
+
+# =========================
+# P2 hardening: ⑥a/⑥b/⑥c
+# =========================
+
+def test_validated_at_is_populated_with_timestamp() -> None:
+    # ⑥a: previously hardcoded to "" so P19's validation_duration could never
+    # be derived. Now it carries an ISO-8601 UTC timestamp.
+    vr = validator.validate("T7", _contract(), _result_passing())
+    assert vr.validated_at, "validated_at must not be empty"
+    parsed = datetime.fromisoformat(vr.validated_at)
+    assert parsed.tzinfo is not None
+
+
+def test_tokenize_command_keeps_shell_metacharacters_literal() -> None:
+    # ⑥b: a test command sourced from the LLM planner must never reach a shell.
+    # Shell metacharacters become literal argv tokens instead of being executed.
+    assert DeterministicValidator._tokenize_command("echo a; rm -rf /") == [
+        "echo", "a;", "rm", "-rf", "/"
+    ]
+    assert DeterministicValidator._tokenize_command("a && b || c") == [
+        "a", "&&", "b", "||", "c"
+    ]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="behavioral shell-neutrality check is POSIX-only")
+def test_run_command_does_not_invoke_shell() -> None:
+    # `true; false` exits 0 under a shell; without one, "true;" is not a command
+    # and the run fails (exit_code -1), proving no shell was spawned.
+    result = DeterministicValidator()._run_command("true; false")
+    assert result.exit_code != 0
+
+
+def test_self_test_timeout_is_configurable() -> None:
+    # ⑥c: the hardcoded 120s self-test timeout is now a constructor parameter.
+    contract = _contract()
+    contract.test_scope = [AllowedTestAction.ADD_TEST]
+    # A command that sleeps longer than the configured budget must be killed and
+    # reported as a failing self-test, not hang the validator.
+    contract.test_command = f'{sys.executable} -c "import time; time.sleep(5)"'
+    vr = DeterministicValidator(self_test_timeout=1).validate("T7", contract, _result_passing())
+    self_test = [c for c in vr.criterion_results if c.criterion == "Self-test execution"]
+    assert self_test, "self-test criterion should be present"
+    assert self_test[0].status == CriterionStatus.FAIL
+

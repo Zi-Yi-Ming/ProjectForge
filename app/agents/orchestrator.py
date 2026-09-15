@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import secrets
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -36,6 +38,7 @@ class ExecutionOrchestrator:
         replan_persistence: Any | None = None,
         replan_applier: Any | None = None,
         artifacts_root: Path | None = None,
+        max_run_seconds: float | None = None,
     ) -> None:
         self.adapter = adapter
         self.validator = validator or DeterministicValidator()
@@ -48,6 +51,10 @@ class ExecutionOrchestrator:
         self.replan_persistence = replan_persistence
         self.replan_applier = replan_applier
         self.artifacts_root = artifacts_root
+        # ⑥g: global wall-clock budget for a run. 12 tasks x 3 retries x 300s is
+        # worst-case ~3h with no gate. None keeps the previous unbounded behavior,
+        # so opting in is required.
+        self.max_run_seconds = max_run_seconds
 
     def _artifact_store_for(self, run_dir: Path | None, run_id: str | None) -> ArtifactStore | None:
         """Pick where audit artifacts live.
@@ -96,12 +103,15 @@ class ExecutionOrchestrator:
             return run
 
         self.scheduler.update_states(task_graph)
+        budget_start = time.monotonic()
 
         while True:
-            if cancel_check is not None and cancel_check():
-                run.cancel_requested = True
+            over_budget = self._is_over_budget(budget_start)
+            if over_budget or (cancel_check is not None and cancel_check()):
+                # A budget stop is not a user cancellation; keep the two distinct.
+                run.cancel_requested = not over_budget
                 run.status = ExecutionStatus.BLOCKED
-                run.blocking_reason = "CANCELLED"
+                run.blocking_reason = "TIME_BUDGET_EXCEEDED" if over_budget else "CANCELLED"
                 for task in task_graph.tasks:
                     if task.status not in {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.BLOCKED}:
                         task.status = TaskStatus.BLOCKED
@@ -160,7 +170,7 @@ class ExecutionOrchestrator:
                 if artifact_store is not None:
                     artifact_store.save(
                         Artifact(
-                            artifact_id=f"{next_task.id}_error",
+                            artifact_id=self._unique_artifact_id(next_task.id, "error"),
                             task_id=next_task.id,
                             artifact_type=ArtifactType.ERROR_LOG,
                             created_at=self._now(),
@@ -193,7 +203,7 @@ class ExecutionOrchestrator:
                 if artifact_store is not None:
                     artifact_store.save(
                         Artifact(
-                            artifact_id=f"{next_task.id}_output",
+                            artifact_id=self._unique_artifact_id(next_task.id, "output"),
                             task_id=next_task.id,
                             artifact_type=ArtifactType.AGENT_OUTPUT,
                             created_at=self._now(),
@@ -239,7 +249,7 @@ class ExecutionOrchestrator:
             if artifact_store is not None:
                 artifact_store.save(
                     Artifact(
-                        artifact_id=f"{next_task.id}_validation",
+                        artifact_id=self._unique_artifact_id(next_task.id, "validation"),
                         task_id=next_task.id,
                         artifact_type=ArtifactType.VALIDATION_RESULT,
                         created_at=self._now(),
@@ -250,7 +260,7 @@ class ExecutionOrchestrator:
                 if execution_result.git_checkpoint is not None:
                     artifact_store.save(
                         Artifact(
-                            artifact_id=f"{next_task.id}_git",
+                            artifact_id=self._unique_artifact_id(next_task.id, "git"),
                             task_id=next_task.id,
                             artifact_type=ArtifactType.GIT_CHECKPOINT,
                             created_at=self._now(),
@@ -344,6 +354,19 @@ class ExecutionOrchestrator:
         )
         self.persistence.save_task_record(run.run_id, record)
         self.persistence.save_run(run)
+
+    def _is_over_budget(self, started: float) -> bool:
+        if self.max_run_seconds is None:
+            return False
+        return (time.monotonic() - started) >= self.max_run_seconds
+
+    @staticmethod
+    def _unique_artifact_id(task_id: str, kind: str) -> str:
+        # ⑥d: artifact ids used to be deterministic (`{task_id}_output`), so a
+        # retry overwrote the previous attempt's artifact and the history was
+        # lost. A short random suffix keeps the `{task_id}_` prefix (still matched
+        # by ArtifactStore.list_for_task) while making each attempt distinct.
+        return f"{task_id}_{kind}_{secrets.token_hex(4)}"
 
     def _build_contract(self, task: Task, project_map: ProjectMap, run_dir: Path | None = None) -> TaskContract:
         # Scope resolution has three cases:

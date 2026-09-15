@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from app.agents.artifact_store import ArtifactStore
 from app.agents.blueprint import BlueprintAgent
 from app.agents.coding_agent import CodingAgentAdapter
 from app.agents.hermes_adapter import HermesAdapter
@@ -26,6 +27,7 @@ from app.schemas.implementation import (
 )
 from app.schemas.jd import JDProfile
 from app.schemas.matching import ProjectFit
+from app.schemas.persistence import Artifact, ArtifactType
 from app.schemas.research import GitHubInfo, ResearchOutput
 from app.schemas.scoring import RepositoryScore
 from app.schemas.task import Task, TaskGraph, TaskGraphValidation, TaskStatus
@@ -350,3 +352,49 @@ def test_orchestrator_e2e_with_real_task_graph() -> None:
     run = orchestrator.run(graph, ProjectMap())
     assert run.status == ExecutionStatus.COMPLETED
     assert len(run.completed_tasks) == run.total_tasks
+
+
+def test_run_stops_when_time_budget_exceeded() -> None:
+    # ⑥g: a run must be bounded by a wall-clock budget. A zero-second budget is
+    # already exhausted on the first iteration.
+    graph = _linear_graph()
+    adapter = MockAdapter()
+    orchestrator = ExecutionOrchestrator(
+        adapter=adapter, validator=_PassValidator(), max_run_seconds=0
+    )
+    run = orchestrator.run(graph, ProjectMap())
+    assert run.status == ExecutionStatus.BLOCKED
+    assert run.blocking_reason == "TIME_BUDGET_EXCEEDED"
+    # a budget stop is not a user cancellation
+    assert run.cancel_requested is False
+
+
+def test_run_unbounded_by_default() -> None:
+    # max_run_seconds defaults to None, preserving the previous unbounded run.
+    graph = _linear_graph()
+    adapter = MockAdapter()
+    orchestrator = ExecutionOrchestrator(adapter=adapter, validator=_PassValidator())
+    run = orchestrator.run(graph, ProjectMap())
+    assert run.status == ExecutionStatus.COMPLETED
+
+
+def test_retry_attempts_produce_distinct_artifacts(tmp_path: Path) -> None:
+    # ⑥d: artifact ids used to be deterministic (`{task_id}_output`), so a retry
+    # overwrote the previous attempt and the history was lost. Each attempt must
+    # now produce its own artifact while still grouping under the task.
+    first_id = ExecutionOrchestrator._unique_artifact_id("T1", "output")
+    second_id = ExecutionOrchestrator._unique_artifact_id("T1", "output")
+    assert first_id != second_id
+    assert first_id.startswith("T1_")
+    assert second_id.startswith("T1_")
+
+    store = ArtifactStore(tmp_path)
+    for artifact_id in (first_id, second_id):
+        store.save(
+            Artifact(artifact_id=artifact_id, task_id="T1", artifact_type=ArtifactType.AGENT_OUTPUT),
+            f"payload for {artifact_id}",
+        )
+    assert len(store.list_for_task("T1")) == 2
+    # both payloads survive: no overwrite
+    assert store.load(first_id)[1] == f"payload for {first_id}"
+    assert store.load(second_id)[1] == f"payload for {second_id}"

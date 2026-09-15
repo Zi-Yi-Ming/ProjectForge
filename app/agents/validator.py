@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,9 +35,12 @@ class _CommandResult:
 
 
 class DeterministicValidator:
-    def __init__(self, scope_mode: str | None = None) -> None:
+    def __init__(self, scope_mode: str | None = None, self_test_timeout: float = 120.0) -> None:
         # Explicit > env (PROJECTFORGE_SCOPE_MODE) > default (warn).
         self.scope_mode = resolve_scope_mode(scope_mode)
+        # Self-test timeout was previously hardcoded to 120s; it is now
+        # configurable so it can be aligned with the runner's --timeout budget.
+        self.self_test_timeout = self_test_timeout
 
     def validate(
         self,
@@ -198,7 +203,7 @@ class DeterministicValidator:
             manual_review_items=manual_review_items,
             llm_review=None,
             repair_cycle=0,
-            validated_at="",
+            validated_at=datetime.now(timezone.utc).isoformat(),
         )
 
     def _run_self_test(
@@ -210,10 +215,18 @@ class DeterministicValidator:
         failures: list[str],
         workspace: Path | None = None,
     ) -> _CommandResult:
-        test_command = task_contract.test_command or f"{sys.executable} -m pytest -q"
-        command_result = self._run_command(test_command, workspace=workspace)
+        # Default pytest invocation is passed as a safe argv list (no
+        # tokenization needed, and it sidesteps spaced-python-path issues on
+        # Windows). A custom test_command from the contract is a string and is
+        # tokenized without a shell by _run_command.
+        if task_contract.test_command:
+            resolved_command: str | list[str] = task_contract.test_command
+            command_result = self._run_command(task_contract.test_command, workspace=workspace)
+        else:
+            resolved_command = [sys.executable, "-m", "pytest", "-q"]
+            command_result = self._run_command(resolved_command, workspace=workspace)
         test_results.append(command_result.stdout)
-        evidence.append(f"test_command={test_command}")
+        evidence.append(f"test_command={resolved_command}")
         evidence.append(f"test_exit_code={command_result.exit_code}")
         if command_result.exit_code in (0, 5):
             criterion_results.append(
@@ -238,15 +251,25 @@ class DeterministicValidator:
             failures.append("Self-test execution failed.")
         return command_result
 
-    def _run_command(self, command: str, workspace: Path | None = None) -> _CommandResult:
+    @staticmethod
+    def _tokenize_command(command: str) -> list[str]:
+        # P19 explicitly forbids shell injection, so a test command sourced from
+        # the LLM planner must never reach a shell. Tokenize into argv; shell
+        # metacharacters (";", "&&", "|"...) become literal arguments instead of
+        # being executed. posix=True is required for correct quote removal
+        # (otherwise "python -c \"...\"" keeps the quotes and silently no-ops).
+        return shlex.split(command, posix=True)
+
+    def _run_command(self, command: str | list[str], workspace: Path | None = None) -> _CommandResult:
+        args = command if isinstance(command, list) else self._tokenize_command(command)
         try:
             proc = subprocess.run(
-                command,
-                shell=True,
+                args,
+                shell=False,
                 cwd=str(workspace or Path(".")),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=120,
+                timeout=self.self_test_timeout,
             )
             return _CommandResult(
                 command=command,

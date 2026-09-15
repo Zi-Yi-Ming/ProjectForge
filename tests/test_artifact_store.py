@@ -37,6 +37,24 @@ def test_list_for_task_filters_by_prefix(tmp_path: Path) -> None:
     assert len(store.list_for_task("T2")) == 1
 
 
+def test_list_for_task_does_not_cross_match_numeric_prefix(tmp_path: Path) -> None:
+    # ⑥f regression: a task id that is a prefix of another (T1 vs T10) must not
+    # cross-match. The "_" boundary in the stored artifact id is what keeps
+    # list_for_task("T1") from returning T10's artifacts.
+    store = ArtifactStore(tmp_path)
+    for task_id, artifact_id in [
+        ("T1", "T1_output"),
+        ("T10", "T10_output"),
+        ("T10", "T10_validation"),
+    ]:
+        artifact = Artifact(artifact_id=artifact_id, task_id=task_id, artifact_type=ArtifactType.AGENT_OUTPUT)
+        store.save(artifact, "")
+    t1 = store.list_for_task("T1")
+    assert [a.artifact_id for a in t1] == ["T1_output"]
+    t10 = store.list_for_task("T10")
+    assert sorted(a.artifact_id for a in t10) == ["T10_output", "T10_validation"]
+
+
 def test_save_requires_artifact_id(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path)
     with pytest.raises(ValueError):

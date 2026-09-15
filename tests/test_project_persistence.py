@@ -120,6 +120,57 @@ def test_event_idempotent_append(tmp_path: Path) -> None:
     assert len(events) == 1
 
 
+def test_event_store_respects_existing_events_on_reseed(tmp_path: Path) -> None:
+    # ⑥e: the seen-id set is lazily seeded from disk on first append, so a fresh
+    # EventStore instance must still dedupe against events written earlier.
+    first = EventStore(base_dir=tmp_path)
+    first.append(
+        ProductEvent(
+            event_id="evt-seed",
+            event_type="PROJECT_CREATED",
+            project_id="proj-seed",
+            timestamp="2026-01-01T00:00:00Z",
+            actor=Actor.SYSTEM,
+            payload={},
+        )
+    )
+    second = EventStore(base_dir=tmp_path)
+    second.append(
+        ProductEvent(
+            event_id="evt-seed",
+            event_type="OTHER",
+            project_id="proj-seed",
+            timestamp="2026-01-01T00:00:00Z",
+            actor=Actor.SYSTEM,
+            payload={},
+        )
+    )
+    events = second.get_events("proj-seed")
+    assert len(events) == 1
+    assert events[0].event_type == "PROJECT_CREATED"
+
+
+def test_event_store_scales_without_duplicate_lines(tmp_path: Path) -> None:
+    # Many appends must yield exactly that many lines (no per-append re-read
+    # growth, and no silent drops from id collisions).
+    store = EventStore(base_dir=tmp_path)
+    n = 50
+    for i in range(n):
+        store.append(
+            ProductEvent(
+                event_id=f"evt-{i}",
+                event_type="STEP",
+                project_id="proj-scale",
+                timestamp="2026-01-01T00:00:00Z",
+                actor=Actor.SYSTEM,
+                payload={"i": i},
+            )
+        )
+    path = tmp_path / "proj-scale" / "events" / "events.jsonl"
+    assert len(path.read_text(encoding="utf-8").splitlines()) == n
+    assert len(store.get_events("proj-scale")) == n
+
+
 def test_concurrent_event_append(tmp_path: Path) -> None:
     event_store = EventStore(base_dir=tmp_path)
     project_id = "proj-concurrent"

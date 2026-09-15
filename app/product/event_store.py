@@ -22,6 +22,20 @@ class EventStore:
     def __init__(self, base_dir: Path | None = None) -> None:
         self.base_dir = base_dir or Path(".runtime/projects")
         self._lock = Lock()
+        # Lazily seeded set of known event ids for the lifetime of this store.
+        # Replacing the old per-append full-file re-read (O(n^2) total) with a
+        # one-time load + incremental updates keeps append() effectively O(1).
+        self._seen_ids: set[str] | None = None
+
+    def _load_seen_ids(self, path: Path) -> set[str]:
+        ids: set[str] = set()
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    ids.add(json.loads(line).get("event_id"))
+                except json.JSONDecodeError:
+                    continue
+        return ids
 
     def append(self, event: ProductEvent) -> ProductEvent:
         project_dir = self.base_dir / event.project_id / "events"
@@ -31,20 +45,15 @@ class EventStore:
         payload["actor"] = event.actor.value if isinstance(event.actor, Actor) else str(event.actor)
         line = json.dumps(payload, ensure_ascii=False)
         with self._lock:
-            existing_ids = set()
-            if path.exists():
-                for existing_line in path.read_text(encoding="utf-8").splitlines():
-                    try:
-                        existing_event = json.loads(existing_line)
-                        existing_ids.add(existing_event.get("event_id"))
-                    except json.JSONDecodeError:
-                        continue
-            if event.event_id in existing_ids:
+            if self._seen_ids is None:
+                self._seen_ids = self._load_seen_ids(path)
+            if event.event_id in self._seen_ids:
                 return event
             with path.open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
                 f.flush()
                 os.fsync(f.fileno())
+            self._seen_ids.add(event.event_id)
         return event
 
     def get_events(self, project_id: str) -> list[ProductEvent]:

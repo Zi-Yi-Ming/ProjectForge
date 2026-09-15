@@ -20,6 +20,33 @@ Format: Keep a Changelog; versioning: SemVer（0.x 阶段 minor = 能力/破坏�
 - **warn 模式误伤任务**：validator 在 warn 下原先对越界发出 `NEEDS_REVIEW` criterion（仍会阻断任务），
   与"观察期不判死"矛盾。改为只把越界写进 `warnings` / `evidence`，由真实运行先收集假阳性率，再切 enforce。
 
+## [0.5.2] - 2026-09-15
+### Fixed（P2 小裂缝批量清理，均有证据）
+- **`shell=True` 执行 `test_command`（注入面）**：验证器用 shell 跑来自 LLM planner 的
+  `test_command`，P19 明令禁止。改为：默认 pytest 调用以安全 argv 列表下发（同时在 Windows 上
+  避开带空格的 `sys.executable` 被切碎的问题），自定义命令经 `shlex.split(..., posix=True)`
+  转为 argv 且 `shell=False` → `;`、`&&`、`|` 退化为字面参数而非被执行。
+  注：曾用 `posix=False` 保 Windows 反斜杠，实测**引号不被剥离**导致
+  `python -c "…"` 变成空转的字符串表达式、瞬时"通过"，改回 `posix=True`。
+- **产物 id 复用导致重试覆盖**：`{task_id}_output` 等固定 id 让同一任务的多次尝试只留最后一份，
+  历史丢失。改为 `{task_id}_{kind}_{token_hex(4)}`——保留 `{task_id}_` 前缀以兼容
+  `ArtifactStore.list_for_task`，多次尝试各自成档。
+- **`validated_at` 恒为空**：写入 ISO-8601 UTC 时间戳，P19 的 `validation_duration` 才可计算。
+  （顺带：`test_deterministic_validator_deterministic` 的全量 dump 对比排除该时间戳。）
+- **自测超时 120s 硬编码**：改为 `DeterministicValidator(self_test_timeout=...)` 构造参数，默认仍 120s。
+
+### Added
+- **`EventStore` 去掉 O(n²)**：`append` 原每次重读整个 jsonl 建 id 集（n 大时 O(n²)），
+  改为实例级惰性 id 缓存 + 增量更新。保留幂等去重，并补测"换实例重开仍能对既有事件去重"。
+- **主循环加全局时长预算**：`ExecutionOrchestrator(max_run_seconds=...)`，主循环以
+  `time.monotonic()` 卡预算，超限即以 `TIME_BUDGET_EXCEEDED` 收束（与用户 `CANCELLED` 区分）。
+  默认 `None` 维持原不受限行为，属**显式启用**。
+
+### 核实后未改动的项
+- `ArtifactStore.list_for_task` 的"T1 匹配 T10_x"**实测不重现**：现有实现用
+  `startswith(f"{task_id}_")` 的 `_` 边界，`T10_output` 对 `T1_` 为假。
+  不改生产代码，补一条 T1/T10 回归测试锁定该边界行为。
+
 ## [0.5.0] - 2026-09-15
 ### Added
 - **任务级路径约束（可选启用）**：`Task.allowed_paths` 可声明任务允许修改的路径。
