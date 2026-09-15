@@ -34,13 +34,17 @@ Format: Keep a Changelog; versioning: SemVer（0.x 阶段 minor = 能力/破坏�
 - **`validated_at` 恒为空**：写入 ISO-8601 UTC 时间戳，P19 的 `validation_duration` 才可计算。
   （顺带：`test_deterministic_validator_deterministic` 的全量 dump 对比排除该时间戳。）
 - **自测超时 120s 硬编码**：改为 `DeterministicValidator(self_test_timeout=...)` 构造参数，默认仍 120s。
+  **并接上 `--timeout` 体系**：`ProjectService._build_executor` 现在把解析后的 `task_timeout`
+  注入验证器，即 `--timeout` / `PROJECTFORGE_TASK_TIMEOUT_SECONDS` 同时管住"任务内所有子进程"
+  （含自测）。（注：经 service 走的自测预算随之由 120s 变为配置的 task_timeout，默认 300s。）
 
 ### Added
 - **`EventStore` 去掉 O(n²)**：`append` 原每次重读整个 jsonl 建 id 集（n 大时 O(n²)），
   改为实例级惰性 id 缓存 + 增量更新。保留幂等去重，并补测"换实例重开仍能对既有事件去重"。
 - **主循环加全局时长预算**：`ExecutionOrchestrator(max_run_seconds=...)`，主循环以
   `time.monotonic()` 卡预算，超限即以 `TIME_BUDGET_EXCEEDED` 收束（与用户 `CANCELLED` 区分）。
-  默认 `None` 维持原不受限行为，属**显式启用**。
+  默认 `None` 维持原不受限行为，属**显式启用**；配套 env `PROJECTFORGE_MAX_RUN_SECONDS`
+  （`resolve_max_run_seconds()`，未设/非法值即不受限），无需改代码即可打开闸门。
 
 ### 核实后未改动的项
 - `ArtifactStore.list_for_task` 的"T1 匹配 T10_x"**实测不重现**：现有实现用

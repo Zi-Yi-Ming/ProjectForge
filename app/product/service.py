@@ -118,6 +118,24 @@ def planner_factory_from_name(planner: str) -> Any:
     raise ValueError(f"Unknown planner: {planner}. Choose from: rule, llm.")
 
 
+def resolve_max_run_seconds() -> float | None:
+    """Global wall-clock budget for a run: env > None (unbounded).
+
+    Deliberately opt-in. A run is bounded only when this is set, so enabling it
+    never silently truncates an existing workload.
+    """
+    raw = os.environ.get("PROJECTFORGE_MAX_RUN_SECONDS", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+        if value > 0:
+            return value
+    except ValueError:
+        pass
+    return None
+
+
 class ProjectService:
     def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None, executor_factory: Any = None, base_dir: Path | None = None, task_timeout: int | None = None) -> None:
         self.base_dir = resolve_base_dir(base_dir)
@@ -141,7 +159,17 @@ class ProjectService:
         # Keep audit artifacts under runs/<run_id>/artifacts (the documented
         # layout) rather than inside the executor workspace, where they would
         # be swept into the per-task git checkpoint.
-        return ExecutionOrchestrator(adapter=adapter, artifacts_root=self.base_dir / "runs")
+        from app.agents.validator import DeterministicValidator
+
+        # --timeout / PROJECTFORGE_TASK_TIMEOUT_SECONDS governs every subprocess
+        # a task spawns, so it also drives the validator's self-test timeout --
+        # previously a hardcoded 120s that ignored the configured budget.
+        return ExecutionOrchestrator(
+            adapter=adapter,
+            artifacts_root=self.base_dir / "runs",
+            validator=DeterministicValidator(self_test_timeout=self.task_timeout),
+            max_run_seconds=resolve_max_run_seconds(),
+        )
 
     def _auto_run_dir(self, project_id: str) -> Path:
         run_dir = self.base_dir / "workspaces" / project_id
