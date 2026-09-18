@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.agents.coding_agent import CodingAgentAdapter
 from app.agents.sandbox_policy import SandboxUnavailableError, SandboxPolicy
+from app.agents.workspace_provider import FixedWorkspaceProvider, WorkspaceProvider
 from app.schemas.implementation import (
     AgentExecutionResult,
     ExecutionStatus,
@@ -39,8 +40,13 @@ class CliAgentAdapter(CodingAgentAdapter):
         timeout_seconds: int = 900,
         sandbox_policy: SandboxPolicy | None = None,
         max_iterations: int = 3,
+        workspace_provider: WorkspaceProvider | None = None,
     ) -> None:
         self.workspace = workspace
+        # Single source of truth for where a task runs. It defaults to the fixed
+        # shared workspace, so the serial path is byte-for-byte unchanged; a
+        # parallel run swaps in a provider that hands back a per-branch worktree.
+        self.workspace_provider = workspace_provider or FixedWorkspaceProvider(workspace)
         self.timeout_seconds = timeout_seconds
         self.max_iterations = max_iterations
         self.sandbox_policy = sandbox_policy
@@ -74,7 +80,8 @@ class CliAgentAdapter(CodingAgentAdapter):
         task_contract: TaskContract,
         project_map: ProjectMap,
     ) -> AgentExecutionResult:
-        if self.workspace is None or not self.workspace.exists() or not self.workspace.is_dir():
+        workspace = self.workspace_provider.workspace_for(task_contract)
+        if workspace is None or not workspace.exists() or not workspace.is_dir():
             return AgentExecutionResult(
                 task_id=task_contract.task_id,
                 agent=self.agent_name(),
@@ -84,12 +91,11 @@ class CliAgentAdapter(CodingAgentAdapter):
                 scope_status=ScopeStatus.NEEDS_REVIEW,
                 test_results=[],
                 summary="",
-                errors=[f"Workspace not found: {self.workspace}"],
+                errors=[f"Workspace not found: {workspace}"],
                 blocking_reason="Workspace not found",
                 git_checkpoint=GitCheckpoint(),
             )
 
-        workspace = self.workspace
         prompt = self._build_prompt(task_contract, project_map)
         head_before, pre_existing = self._git_checkpoint_before(workspace)
 
@@ -205,7 +211,7 @@ class CliAgentAdapter(CodingAgentAdapter):
         self._commit_task_changes(workspace, task_contract.task_id)
         changed_files, diff_metadata, head_after = self._git_checkpoint_after(workspace, head_before)
         agent_changes = [f for f in changed_files if f not in pre_existing]
-        scope_status = self._evaluate_scope_from_files(agent_changes, task_contract.allowed_paths)
+        scope_status = self._evaluate_scope_from_files(agent_changes, task_contract.allowed_paths, workspace=workspace)
 
         return AgentExecutionResult(
             task_id=task_contract.task_id,
@@ -355,12 +361,12 @@ class CliAgentAdapter(CodingAgentAdapter):
                 stderr=str(exc),
             )
 
-    def _evaluate_scope_from_files(self, changed_files: list[str], allowed_paths: list[str]) -> ScopeStatus:
+    def _evaluate_scope_from_files(self, changed_files: list[str], allowed_paths: list[str], workspace: Path | None = None) -> ScopeStatus:
         """Delegate to the shared policy so the adapter and the validator
         cannot drift apart on what counts as a violation."""
         from app.agents.scope_policy import evaluate_scope
 
-        return ScopeStatus(evaluate_scope(changed_files, allowed_paths, workspace=self.workspace))
+        return ScopeStatus(evaluate_scope(changed_files, allowed_paths, workspace=workspace or self.workspace))
 
     @staticmethod
     def _path_allowed(changed_path: str, allowed_path: str) -> bool:

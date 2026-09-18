@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.agents.cli_adapter import CliAgentAdapter
 from app.agents.sandbox_policy import BwrapSandboxPolicy
+from app.agents.workspace_provider import WorkspaceProvider
 
 
 class HermesAdapter(CliAgentAdapter):
@@ -13,6 +14,7 @@ class HermesAdapter(CliAgentAdapter):
         workspace: Path | None = None,
         timeout_seconds: int = 900,
         sandbox_policy: BwrapSandboxPolicy | None = None,
+        workspace_provider: WorkspaceProvider | None = None,
     ) -> None:
         super().__init__(
             workspace=workspace,
@@ -22,6 +24,7 @@ class HermesAdapter(CliAgentAdapter):
                 cli_home=Path.home() / ".local",
                 config_home=Path.home() / ".hermes",
             ),
+            workspace_provider=workspace_provider,
         )
         self.hermes_cli = self.agent_binary
 

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.agents.coding_agent import CodingAgentAdapter
+from app.agents.workspace_provider import FixedWorkspaceProvider, WorkspaceProvider
 from app.schemas.implementation import (
     AgentExecutionResult,
     ExecutionStatus,
@@ -29,8 +30,10 @@ class MockExecutor(CodingAgentAdapter):
         workspace: Path | None = None,
         timeout_seconds: int = 300,
         outcomes: dict[str, list[ExecutionStatus]] | None = None,
+        workspace_provider: WorkspaceProvider | None = None,
     ) -> None:
         self.workspace = workspace
+        self.workspace_provider = workspace_provider or FixedWorkspaceProvider(workspace)
         self.timeout_seconds = timeout_seconds
         self._outcomes = {task_id: list(queue) for task_id, queue in (outcomes or {}).items()}
 
@@ -46,18 +49,19 @@ class MockExecutor(CodingAgentAdapter):
             status = queue.pop(0)
 
         changed_files: list[str] = []
-        if status == ExecutionStatus.IMPLEMENTED and self.workspace is not None and self.workspace.exists():
+        workspace = self.workspace_provider.workspace_for(task_contract)
+        if status == ExecutionStatus.IMPLEMENTED and workspace is not None and workspace.exists():
             impl_rel = f"{task_contract.task_id.lower()}_impl.txt"
-            (self.workspace / impl_rel).write_text(
+            (workspace / impl_rel).write_text(
                 f"task: {task_contract.task_id}\ngoal: {task_contract.goal}\n",
                 encoding="utf-8",
             )
             changed_files.append(impl_rel)
             if task_contract.test_paths:
-                tests_dir = self.workspace / task_contract.test_paths[0]
+                tests_dir = workspace / task_contract.test_paths[0]
                 tests_dir.mkdir(parents=True, exist_ok=True)
                 test_rel = f"{task_contract.test_paths[0]}/test_{task_contract.task_id.lower()}.py"
-                (self.workspace / test_rel).write_text(
+                (workspace / test_rel).write_text(
                     f"def test_{task_contract.task_id.lower()}_deliverable():\n    assert True\n",
                     encoding="utf-8",
                 )
