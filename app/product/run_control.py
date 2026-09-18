@@ -45,7 +45,7 @@ class RunControl:
         self._cancellations: set[str] = set()
 
     def _now(self) -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     def _event(self, event_type: str, project_id: str, run_id: str, payload: dict[str, Any] | None = None) -> None:
         if self.event_store is None:
