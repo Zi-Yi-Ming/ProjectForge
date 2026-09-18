@@ -483,6 +483,24 @@ def test_non_ready_task_is_rejected() -> None:
         assert not_ready[0].id not in (graph.graph_validation.ready_tasks if graph.graph_validation else [])
 
 
+def test_rule_planned_graph_carries_real_dependency_edges() -> None:
+    graph = engine.build(_make_blueprint())
+    gv = graph.graph_validation
+    assert gv is not None
+    # promoting prerequisites into dependencies must not introduce cycles
+    assert gv.valid is True and gv.cycle_detected is False
+    # at least one edge now exists (was the zero-edge flat list before S3)
+    assert any(t.dependencies for t in graph.tasks)
+    # topological_order covers every task exactly once
+    order = gv.topological_order
+    assert sorted(order) == sorted(t.id for t in graph.tasks)
+    # every dependency precedes its dependent in topological order
+    position = {tid: idx for idx, tid in enumerate(order)}
+    for task in graph.tasks:
+        for dep in task.dependencies:
+            assert dep in position and position[dep] < position[task.id]
+
+
 # =========================
 # Execution behavior
 # =========================

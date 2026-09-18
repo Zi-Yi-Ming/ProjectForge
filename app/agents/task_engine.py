@@ -361,8 +361,20 @@ class TaskEngine:
         return self.phases[0] if self.phases else None
 
     def _link_dependencies(self) -> None:
+        # The scheduler, graph validation and replan DAG all read
+        # ``task.dependencies``, but the rule planner encodes its build order in
+        # ``prerequisites``. Promote those into ``dependencies`` so a
+        # rule-planned graph carries real edges instead of looking fully
+        # independent. prerequisites always reference an earlier task id, so
+        # this cannot introduce a cycle.
+        ids = {task.id for task in self.tasks}
         for task in self.tasks:
-            task.dependencies = [dep for dep in task.dependencies if any(t.id == dep for t in self.tasks)]
+            merged = [
+                dep
+                for dep in dict.fromkeys([*task.dependencies, *task.prerequisites])
+                if dep in ids and dep != task.id
+            ]
+            task.dependencies = merged
 
     def _validate(self) -> TaskGraphValidation:
         return validate_tasks(self.tasks)
