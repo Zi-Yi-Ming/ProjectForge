@@ -37,6 +37,33 @@ VALID_PLAN = json.dumps(
 SAMPLE_JD = "岗位：Java 后端工程师。要求：熟悉 Java、Spring Boot、MySQL、Redis。"
 
 
+PLAN_WITH_CHECKS = json.dumps(
+    {
+        "jd_profile": {
+            "role": "Go 后端工程师", "seniority": "intern",
+            "required_skills": ["Go"], "preferred_skills": ["Redis"], "engineering_topics": ["REST API"],
+        },
+        "blueprint": {
+            "name": "go-project", "one_line_description": "Go 后端", "business_domain": "电商",
+            "project_type": "original", "technology_stack": ["Go"], "core_features": ["下单"],
+            "selected_scope": "Core", "scope_rationale": "基础",
+        },
+        "tasks": [
+            {"id": "T1", "title": "骨架", "goal": "搭建骨架", "why": "基础", "dependencies": [], "scope": "Core",
+             "acceptance_criteria": ["服务可启动", "README 存在"],
+             "criterion_checks": [
+                 {"criterion": "服务可启动", "kind": "test", "target": "tests/test_boot.py"},
+                 {"criterion": "README 存在", "kind": "FILE", "target": "README.md"},
+                 {"criterion": "bogus", "kind": "NONSENSE", "target": "x"},
+                 "not-a-dict",
+             ],
+             "technical_points": [], "interview_points": []},
+        ],
+    },
+    ensure_ascii=False,
+)
+
+
 def _planner(responses: list[str], seen: list[httpx.Request] | None = None) -> LlmPlanner:
     def handler(request: httpx.Request) -> httpx.Response:
         if seen is not None:
@@ -135,3 +162,22 @@ def test_llm_plan_graph_counters_are_populated() -> None:
     assert result.task_graph.required_tasks == 2
     assert result.task_graph.optional_tasks == 0
     assert result.task_graph.graph_validation.total_tasks == 2
+
+
+def test_llm_plan_parses_criterion_checks_and_jd_profile() -> None:
+    result = _planner([PLAN_WITH_CHECKS]).plan("Go 后端工程师，熟悉 Go，有 Redis 经验者优先")
+
+    assert result.jd_profile.role == "Go 后端工程师"
+    assert result.jd_profile.required_skills == ["Go"]
+
+    checks = result.task_graph.tasks[0].criterion_checks
+    # valid entries kept (kind normalized to upper), bad-kind + non-dict dropped
+    assert [(c.kind, c.target) for c in checks] == [("TEST", "tests/test_boot.py"), ("FILE", "README.md")]
+
+
+def test_llm_plan_without_criterion_checks_stays_empty() -> None:
+    # Old-shape output must not fabricate checks, and the existing jd_profile
+    # in VALID_PLAN is parsed.
+    result = _planner([VALID_PLAN]).plan(SAMPLE_JD)
+    assert all(task.criterion_checks == [] for task in result.task_graph.tasks)
+    assert result.jd_profile.role == "Java 后端工程师"

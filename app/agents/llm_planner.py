@@ -13,10 +13,14 @@ from app.agents.planner import RuleBasedPlanner
 from app.agents.task_engine import validate_tasks
 from app.schemas.blueprint import ProjectBlueprint, UserProfile
 from app.schemas.planner import PlanningResult
-from app.schemas.task import Phase, Task, TaskGraph, TaskStatus
+from app.schemas.task import AcceptanceCheck, Phase, Task, TaskGraph, TaskStatus
 
 SYSTEM_PROMPT = """你是资深软件工程导师，负责把岗位 JD 转化为一份面试准备项目的工程计划。只输出一个 JSON 对象，结构如下：
 {
+  "jd_profile": {
+    "role": "岗位角色", "seniority": "intern|junior|mid|senior|unknown",
+    "required_skills": ["..."], "preferred_skills": ["..."], "engineering_topics": ["..."]
+  },
   "blueprint": {
     "name": "项目名", "one_line_description": "一句话描述", "business_domain": "业务领域", "project_type": "original",
     "business_scenario": "...", "target_users": [...], "core_problem": "...", "core_features": ["...", ...],
@@ -33,13 +37,18 @@ SYSTEM_PROMPT = """你是资深软件工程导师，负责把岗位 JD 转化为
   "tasks": [
     {"id": "T1", "title": "...", "goal": "...", "why": "...", "dependencies": ["T1"],
      "scope": "Core", "acceptance_criteria": ["可验证的标准"], "technical_points": [...], "interview_points": [...],
-     "allowed_paths": ["src/", "tests/"]}
+     "allowed_paths": ["src/", "tests/"],
+     "criterion_checks": [{"criterion": "对应的验收标准", "kind": "TEST", "target": "tests/test_x.py::test_y"}]}
   ]
 }
 约束：tasks 数量 6 到 12；scope 只能取 Core / JD Alignment / Engineering Depth / Advanced 四档之一，按档位从易到难排序；
 dependencies 只能引用 tasks 中已有的 id，且不得成环；每个任务至少一条可验证的 acceptance_criteria；
 allowed_paths 是该任务允许修改的相对路径列表，用**目录**（如 "src/"、"tests/"）而不是具体文件名，
 不得使用绝对路径或 ".."，不确定时留空数组 []；
+jd_profile 必须给出，从 JD 原文抽取 role/seniority/required_skills/preferred_skills/engineering_topics；
+每个任务尽量为**每一条** acceptance_criteria 给一条可机器核验的 criterion_checks：kind ∈ TEST/COMMAND/FILE/PATTERN/MANUAL，
+target 按 kind 解释（TEST=pytest 文件或用例节点路径；COMMAND=不经 shell 的命令；FILE=必须存在的相对路径；PATTERN=相对路径:正则）；
+只有确实无法自动核验时才用 MANUAL；
 所有文字用中文；除这个 JSON 对象外不要输出任何内容。"""
 
 _MAX_JD_CHARS = 8000
@@ -85,6 +94,34 @@ def _extract_json(content: str) -> dict[str, Any]:
     return json.loads(text[start : end + 1])
 
 
+_ACCEPTANCE_KINDS = {"TEST", "COMMAND", "FILE", "PATTERN", "MANUAL"}
+
+
+def _parse_criterion_checks(raw: Any) -> list[AcceptanceCheck]:
+    # Best-effort: a malformed entry is dropped rather than crashing the plan
+    # (the never-raise/fallback contract must survive a sloppy LLM field).
+    if not isinstance(raw, list):
+        return []
+    checks: list[AcceptanceCheck] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        kind = str(entry.get("kind", "")).upper()
+        if kind not in _ACCEPTANCE_KINDS:
+            continue
+        try:
+            checks.append(
+                AcceptanceCheck(
+                    criterion=str(entry.get("criterion", "")),
+                    kind=kind,
+                    target=str(entry.get("target", "")),
+                )
+            )
+        except ValidationError:
+            continue
+    return checks
+
+
 def _build_result(data: dict[str, Any]) -> PlanningResult:
     blueprint_data = dict(data["blueprint"])
     scope_name = blueprint_data.pop("selected_scope", "Core")
@@ -126,6 +163,7 @@ def _build_result(data: dict[str, Any]) -> PlanningResult:
                 dependencies=deps,
                 scope=scope_label,
                 acceptance_criteria=list(t.get("acceptance_criteria", [])),
+                criterion_checks=_parse_criterion_checks(t.get("criterion_checks")),
                 out_of_scope=[],
                 technical_points=list(t.get("technical_points", [])),
                 interview_points=list(t.get("interview_points", [])),
