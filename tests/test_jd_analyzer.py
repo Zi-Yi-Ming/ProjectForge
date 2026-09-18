@@ -30,6 +30,33 @@ def test_preferred_skills_only_go_to_preferred() -> None:
     assert set(profile.preferred_skills) == {"Docker", "Redis"}
 
 
+def test_cjk_glued_latin_skills_are_extracted() -> None:
+    # No spaces: every Latin skill is glued to Han characters. Before the fix
+    # ".isalnum()" treated Han as a word char and dropped these entirely.
+    text = "任职要求：熟悉Java、Spring Boot、MySQL；有Redis经验者优先"
+    profile = analyzer.analyze(text)
+
+    assert {"Java", "Spring Boot", "MySQL"}.issubset(set(profile.required_skills))
+    assert set(profile.preferred_skills) == {"Redis"}
+
+
+def test_short_latin_tokens_not_extracted_from_english_words() -> None:
+    # "go"/"js" must not be harvested out of "golang"/"json".
+    text = "负责 Golang 后端与 JSON 接口开发"
+    profile = analyzer.analyze(text)
+
+    assert "Go" not in profile.required_skills
+    assert "Js" not in [s.title() for s in profile.required_skills]
+
+
+def test_short_latin_token_extracted_when_delimited_by_cjk() -> None:
+    text = "精通Go语言，熟悉Redis缓存"
+    profile = analyzer.analyze(text)
+
+    assert "Go" in profile.required_skills
+    assert "Redis" in profile.required_skills
+
+
 def test_engineering_topics_extracted() -> None:
     text = "负责 RESTful API 开发、单元测试、问题排查和技术文档编写。"
     profile = analyzer.analyze(text)

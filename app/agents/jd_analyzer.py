@@ -196,6 +196,14 @@ def _clause_label(clause: str) -> str:
     return "required"
 
 
+def _is_word_char(ch: str) -> bool:
+    # Only ASCII alphanumerics count as "part of the same word". CJK characters
+    # satisfy str.isalnum() but, since Chinese has no spaces, a token glued to a
+    # Han character (熟悉Java, 有Redis经验) is still a real mention — treating it
+    # as embedded would silently drop it.
+    return ch.isascii() and ch.isalnum()
+
+
 def _classify_skill_mentions(text: str) -> _Extracted:
     lower_text = text.lower()
     extracted = _Extracted()
@@ -226,9 +234,9 @@ def _classify_skill_mentions(text: str) -> _Extracted:
                 end = clause_start + match.end()
                 if _is_consumed(start, end):
                     continue
-                if start > 0 and lower_text[start - 1].isalnum():
+                if start > 0 and _is_word_char(lower_text[start - 1]):
                     continue
-                if end < len(lower_text) and lower_text[end].isalnum():
+                if end < len(lower_text) and _is_word_char(lower_text[end]):
                     continue
                 consumed.append((start, end))
                 normalized_token = _normalize_skill(lower_text[start:end])
