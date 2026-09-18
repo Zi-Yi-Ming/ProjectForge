@@ -7,7 +7,7 @@
 
 > 基于岗位 JD 的工程项目教练与约束式执行引擎
 
-ProjectForge 将一份岗位 JD 转化为结构化、可验证的工程项目路径：分析能力画像、计算项目匹配度、生成项目蓝图与任务依赖图，并在约束下推进执行与重新规划。它的目标不是生成“能跑就行”的代码，而是帮你从岗位要求出发，得到一条可以向面试官展示的、经过计划与验证的真实项目路径。
+ProjectForge 将一份岗位 JD 转化为结构化、可验证的工程项目路径：分析能力画像、生成项目蓝图与任务依赖图，并在约束下推进执行与重新规划。它的目标不是生成“能跑就行”的代码，而是帮你从岗位要求出发，得到一条可以向面试官展示的、经过计划与验证的真实项目路径。
 
 ## 它能解决什么问题
 
@@ -31,8 +31,6 @@ ProjectForge 将一份岗位 JD 转化为结构化、可验证的工程项目路
   ↓
 JD 能力画像
   ↓
-项目匹配度
-  ↓
 项目蓝图
   ↓
 任务依赖图
@@ -46,11 +44,11 @@ JD 能力画像
 
 ### JD 能力画像（JD Profile）
 
-从岗位描述中提取结构化能力要求，包括技术栈、工程经验、软技能等，作为后续匹配与规划的输入。
+从岗位描述中提取结构化能力要求，包括技术栈、工程经验、软技能等，作为后续规划与能力覆盖的输入。
 
-### 项目匹配度（Project Fit）
+### 能力覆盖与验收核验
 
-将 JD 能力画像与项目研究结果对照，输出匹配强度、能力缺口、建议的工程方向。
+JD 的能力画像（必备/加分技能、工程主题）被逐项映射到任务蓝图与任务图，形成"能力 → 任务"的覆盖关系。每条验收标准还可绑定一个可机器核验的检查（`TEST`/`COMMAND`/`FILE`/`PATTERN`），其通过/失败结论会出现在面试准备文档里，作为"该能力确实被做出并验证"的证据。（历史上的"项目匹配度"打分随研究/参考库层一同退役，现不再产出。）
 
 ### 项目蓝图（Project Blueprint）
 
@@ -185,14 +183,14 @@ Java 后端开发实习生
 - 单元测试
 ```
 
-### 项目匹配度
+### JD 能力画像
 
-匹配较强：
+岗位必备技能：
 - Java
 - Spring Boot
 - MySQL
 
-能力缺口：
+加分技能：
 - Redis
 - 单元测试
 
@@ -211,7 +209,7 @@ Java 后端开发实习生
 - T04 Redis 缓存
 - T05 单元测试
 
-> 以上为概念示例。实际输出取决于 JD 输入、研究结果和用户选择的 Scope。
+> 以上为概念示例。实际输出取决于 JD 输入、planner 后端（rule 或 llm）与用户选择的 Scope。
 
 ## 架构
 
@@ -222,11 +220,6 @@ Java 后端开发实习生
                      ┌───────────┐
                      │ JDAnalyzer │
                      └─────┬─────┘
-                           │
-                           ▼
-                     ┌────────────┐
-                     │ProjectMatch│
-                     └─────┬──────┘
                            │
                            ▼
                    ┌─────────────────┐
@@ -265,15 +258,24 @@ pytest tests/test_project_core.py tests/test_workflow.py tests/test_run_control.
 - `PROJECTFORGE_TASK_TIMEOUT_SECONDS`：单任务执行器超时（默认 300 秒；最坏执行时间 = 超时 × 重试次数 3），也可用 `run start/resume --timeout` 覆盖
 - `PROJECTFORGE_LLM_BASE_URL` / `PROJECTFORGE_LLM_API_KEY` / `PROJECTFORGE_LLM_MODEL`：配置任意 OpenAI 兼容厂商后，`plan new --planner llm` 可用；不配置则 LLM planner 自动回退规则版
 - `PROJECTFORGE_SCOPE_MODE`：任务级路径约束的强制模式。`warn`（默认）只把越界记录进验证 warning，不判失败；`enforce` 才把越界判为 `SCOPE_VIOLATION`。仅对声明了 `allowed_paths` 的任务生效
+- `PROJECTFORGE_CRITERIA_MODE`：可机器核验的验收标准（`criterion_checks`）模式。`observe`（默认）记录每条准则的核验结论但不改变任务终判；`require` 才让失败的核验阻断 DONE
+- `PROJECTFORGE_VALIDATOR_SANDBOX`：验证器是否在 bwrap 沙箱内执行 agent 写出的测试。默认开（仅在有 bwrap 的 Linux 真实执行路径生效，mock/无 bwrap 自动不沙箱）；`0|false|no|off` 显式关闭
+- `PROJECTFORGE_PARALLEL`：`1|true|yes|on` 时，一个 ready wave 里的独立任务用 git worktree 并发执行、再合并回共享工作区并做集成重验证。默认关（保持串行）；需 Linux + bwrap
+- `PROJECTFORGE_MAX_PARALLEL_WORKERS`：并发 wave 的最大 worker 数（默认由 wave 宽度决定）
+- `PROJECTFORGE_ROLLBACK_ON_FAILURE`：`1|true|yes|on` 时失败任务回滚其半成品（`git reset --hard` + 工作树清理，**破坏性**，默认关）
+- `PROJECTFORGE_MAX_RUN_SECONDS`：整轮运行的墙钟预算，超限以 `TIME_BUDGET_EXCEEDED` 收束。未设=不限（默认）
+- `PROJECTFORGE_EVENT_MAX_FILE_BYTES`：事件日志按大小滚动为 `events-*.jsonl` 分片。未设=不滚动（默认，因会改变磁盘布局）
 
 ## 项目状态
 
 - Product Core（JD → 蓝图 → 任务图）：stable，测试覆盖完整
 - CLI / API：stable（Python 3.10–3.12 CI）
 - 约束式执行：**v0.2 起可用**。mock 后端全链路已验证；Hermes 后端在 Linux + bwrap sandbox 内端到端验证（含真实 LLM 调用），见 [docs/demo.md](docs/demo.md)
-- 确定性验证：任务可声明 `test_paths` / `test_command`，验证器真实执行测试；声明的套件通过时任务可达 DONE，否则保持保守 BLOCKED
+- 确定性验证：任务可声明 `test_paths` / `test_command`，验证器真实执行测试；声明的套件通过时任务可达 DONE，否则保持保守 BLOCKED。验收标准还可绑定 `criterion_checks`（TEST/COMMAND/FILE/PATTERN）逐条机器核验，默认 `observe`（只记录裁决），`require` 才会让失败的核验阻断 DONE
+- 沙箱隔离：真实执行路径下 agent 与验证器都在 bwrap 内运行（文件系统 / pid / ipc 隔离，**与宿主共享网络**）。验证器沙箱把工作区设为唯一可写、其余宿主**只读挂载**——越界写会被挡住，但宿主文件（含家目录）对沙箱内测试仍可读；真网络/读隔离未实现
+- 并行执行（opt-in）：`PROJECTFORGE_PARALLEL=1` 时，就绪波内互相独立的任务在各自 git worktree 并发执行、合并回共享工作区，并**对集成后的工作区重跑验证**（合并冲突或集成失败 → 该任务 FAILED）；worktree/分支在异常路径也会兜底回收。需 Linux + bwrap，默认关
+- 项目匹配度 / 研究-参考库层：**已退役**（研究层不再产出，`project_fit` 不再计算）；能力覆盖改由"能力→任务"映射与逐条验收核验体现
 - cancel：自 v0.2 起真正中断执行（任务间检查点，取消标志跨进程持久）
-- 沙箱隔离：文件系统 / pid / ipc 隔离，**与宿主共享网络**（真网络隔离需 slirp4netns，未实现）
 - v0.2.0 破坏性变更：`--base-dir` 语义改为运行时根（`projects/`、`runs/`、`workspaces/`）；v0.1.x 自定义布局不自动迁移
 - Web UI / 多用户 / 云执行：未实现
 

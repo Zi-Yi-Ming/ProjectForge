@@ -3,6 +3,28 @@
 All notable changes to this project are documented in this file.
 Format: Keep a Changelog; versioning: SemVer（0.x 阶段 minor = 能力/破坏性变更，patch = 修复）。
 
+## [Unreleased]
+Master since 0.5.2, pending the next release. All changes are gated to keep the
+default path's behavior; each was landed with zero regression on the full suite.
+
+### Added
+- **并行执行（opt-in `PROJECTFORGE_PARALLEL`）**：scheduler 暴露有序 `ready_wave`；`workspace_provider` 抽象；就绪波内独立任务在各自 git worktree 并发执行、合并回共享工作区；合并成功补发 `GIT_CHECKPOINT` 产物、合并冲突→FAILED + `ERROR_LOG`；对集成后工作区**重跑验证**（`_post_merge_integration_result`）；三段流程包 `try/finally` 兜底回收 worktree/分支、merge 异常归一为任务 FAILED。
+- **验证器沙箱（S1）**：`ValidatorSandboxPolicy`（宿主只读、工作区唯一可写、不挂凭据目录）；真实 Hermes 路径下 agent 写出的测试在 bwrap 内执行，`PROJECTFORGE_VALIDATOR_SANDBOX=0` 可关。
+- **人审门的 API 边界（S2）**：`/transition` 拒绝裸跳到 READY；新增 `POST /projects/{id}/approve` 走 `approve_plan`。
+- **可机器核验的验收标准（H0-1）**：`AcceptanceCheck` + `Task/TaskContract.criterion_checks`；验证器逐条跑 TEST/COMMAND/FILE/PATTERN；`PROJECTFORGE_CRITERIA_MODE`（observe 默认 / require 阻断）；LLM prompt 产出 `criterion_checks`；面试文档新增"岗位画像与能力覆盖"与逐准则核验、`likely_questions` 去重为单节。
+
+### Changed
+- 规则 planner 现把 `prerequisites` 提升为真实 `dependencies`（S3），任务图不再零边；LLM prompt 要求产出 `jd_profile`（此前恒空）。
+- 两个 `replan_applier` 合一到基础 `ReplanApplier`（S4），修正其把 `forbidden_changes`（防护声明）误当"要求执行禁改"的反向逻辑。
+- 事件日志按**解析后的时刻**排序，`RunControl`/`ReplanControl` 时间戳统一为 `...Z`（原 `...+00:00` 与 `...Z` 混排会错序）。
+
+### Fixed
+- `jd_analyzer` 词边界改 `isascii() and isalnum()`（S6/CJK）：中文无空格 JD 里紧贴汉字的拉丁技能（`熟悉Java`、`有Redis`）不再被丢弃，且 `go`/`js` 仍不会从 `golang`/`json` 误抽。
+- `SPLIT` replan 子任务继承父的 `test_command`/`test_paths`/`allowed_paths`（S5，否则子任务永远只能 BLOCKED）。
+
+### Removed
+- 退役 `project_fit` / 研究-参考库层：两个 planner 现返回 `project_fit=None`（默认路径不再产出"匹配度"打分）；蓝图移除"参考项目覆盖率 / 最终匹配得分"等据不存在的文案，`source_mode` 由 `reference` 改 `generated`。`ProjectMatcher`/`ProjectFit`/`build_match` 代码保留（若将来复活研究层可再用）。
+
 ## [0.5.1] - 2026-09-15
 ### Added
 - **scope 生产者落地（步骤 ③）**：`LlmPlanner` 现在在 system prompt 中要求 LLM 为每个任务产出

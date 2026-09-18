@@ -5,9 +5,9 @@
 ProjectForge 采用 Product Core 作为产品级唯一 mutation 入口，所有 CLI 和 API 操作都必须经过 Product Core。
 
 ```text
-Future CLI
+CLI
      │
-Future API
+API (FastAPI)
      │
      ▼
 Product Core
@@ -25,7 +25,6 @@ Project 是产品级 Aggregate Root。
 ```text
 Project
  ├── JDProfile (reference)
- ├── ProjectFit (reference)
  ├── ProjectBlueprint (reference)
  ├── TaskGraph (reference)
  ├── ExecutionRun(s) (reference)
@@ -150,12 +149,14 @@ Product Core 不直接操作文件 IO，通过 persistence abstraction 访问。
 6. Persistence integration
 7. CLI 完整闭环
 
-### NOT MVP
+### 已交付（原列为 NOT MVP，现已实现）
 - FastAPI / HTTP API
-- Web UI
 - Event Store / Event persistence
 - Run Control（resume/cancel）
 - Replan approval
-- Pause
+
+### NOT MVP（仍未实现）
+- Web UI
 - Auth / Multi-user
 - Cloud execution
+- Pause
