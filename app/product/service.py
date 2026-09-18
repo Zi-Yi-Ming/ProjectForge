@@ -208,6 +208,19 @@ def resolve_validator_sandbox_enabled() -> bool:
     return True
 
 
+def resolve_criteria_mode() -> str:
+    """How machine-checkable acceptance criteria affect the verdict: env > observe.
+
+    ``observe`` records each criterion's check result (PASS criteria + failing
+    checks as warnings) without changing the task outcome; ``require`` lets a
+    failed machine check block DONE. Deliberately opt-in: enabling it must never
+    silently fail work that previously passed. Enable via
+    PROJECTFORGE_CRITERIA_MODE=require.
+    """
+    raw = os.environ.get("PROJECTFORGE_CRITERIA_MODE", "").strip().lower()
+    return "require" if raw == "require" else "observe"
+
+
 class ProjectService:
     def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None, executor_factory: Any = None, base_dir: Path | None = None, task_timeout: int | None = None) -> None:
         self.base_dir = resolve_base_dir(base_dir)
@@ -260,6 +273,7 @@ class ProjectService:
             validator=DeterministicValidator(
                 self_test_timeout=self.task_timeout,
                 sandbox_policy=self._validator_sandbox_policy(real_execution),
+                criteria_mode=resolve_criteria_mode(),
             ),
             max_run_seconds=resolve_max_run_seconds(),
             rollback_on_failure=resolve_rollback_on_failure(),

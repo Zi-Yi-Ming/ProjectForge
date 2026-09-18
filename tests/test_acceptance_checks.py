@@ -4,8 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from app.agents.mock_executor import MockExecutor
 from app.agents.orchestrator import ExecutionOrchestrator
 from app.agents.validator import DeterministicValidator
+from app.product.service import ProjectService, resolve_criteria_mode
 from app.schemas.implementation import (
     AgentExecutionResult,
     ExecutionStatus,
@@ -14,7 +16,7 @@ from app.schemas.implementation import (
     ScopeStatus,
     TaskContract,
 )
-from app.schemas.task import AcceptanceCheck, Task, TaskStatus
+from app.schemas.task import AcceptanceCheck, Task, TaskGraph, TaskStatus
 from app.schemas.validation import (
     CriterionStatus,
     CriterionType,
@@ -190,3 +192,50 @@ def test_build_contract_propagates_criterion_checks(tmp_path: Path) -> None:
     contract = orch._build_contract(task, ProjectMap(), run_dir=tmp_path)
     assert len(contract.criterion_checks) == 1
     assert contract.criterion_checks[0].kind == "FILE"
+
+
+# --- PR2: env resolver + service wiring + end-to-end gating ---
+
+@pytest.mark.parametrize("value,expected", [
+    ("", "observe"), ("require", "require"), ("REQUIRE", "require"),
+    ("observe", "observe"), ("bogus", "observe"),
+])
+def test_resolve_criteria_mode(monkeypatch: pytest.MonkeyPatch, value: str, expected: str) -> None:
+    monkeypatch.setenv("PROJECTFORGE_CRITERIA_MODE", value)
+    assert resolve_criteria_mode() == expected
+
+
+def test_build_executor_threads_criteria_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROJECTFORGE_CRITERIA_MODE", "require")
+    service = ProjectService(
+        base_dir=tmp_path,
+        executor_factory=lambda run_dir, timeout: MockExecutor(workspace=run_dir),
+    )
+    orch = service._build_executor(tmp_path / "ws")
+    assert orch.validator.criteria_mode == "require"
+
+
+def _run_serial_with_failing_check(tmp_path: Path, mode: str) -> str:
+    run_dir = tmp_path / "ws"
+    run_dir.mkdir()
+    orch = ExecutionOrchestrator(
+        adapter=MockExecutor(workspace=run_dir),
+        validator=DeterministicValidator(criteria_mode=mode),
+        parallel_enabled=False,
+    )
+    task = Task(
+        id="T1", phase_id="P1", title="t", goal="g", status=TaskStatus.PENDING,
+        acceptance_criteria=["delivered"], test_paths=["tests"],
+        criterion_checks=[AcceptanceCheck(criterion="marker", kind="FILE", target="does_not_exist.txt")],
+    )
+    graph = TaskGraph(project="p", tasks=[task], total_tasks=1, required_tasks=1, optional_tasks=0)
+    run = orch.run(graph, ProjectMap(), run_dir=run_dir)
+    return run.task_results[0].status
+
+
+def test_observe_failing_check_still_reaches_done(tmp_path: Path) -> None:
+    assert _run_serial_with_failing_check(tmp_path, "observe") == TaskStatus.DONE.value
+
+
+def test_require_failing_check_blocks_done(tmp_path: Path) -> None:
+    assert _run_serial_with_failing_check(tmp_path, "require") == TaskStatus.FAILED.value
