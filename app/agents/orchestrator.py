@@ -23,7 +23,7 @@ from app.schemas.implementation import ProjectMap, TaskContract
 from app.schemas.persistence import Artifact, ArtifactType
 from app.schemas.replan import ReplanProposalStatus
 from app.schemas.task import Task, TaskGraph, TaskStatus
-from app.schemas.validation import ValidationResult, ValidationStatus
+from app.schemas.validation import CriterionResult, CriterionStatus, CriterionType, ValidationResult, ValidationStatus
 
 
 @dataclass
@@ -418,8 +418,27 @@ class ExecutionOrchestrator:
 
             if status == TaskStatus.DONE:
                 merge = mgr.merge(outcome.branch)
-                if not merge.ok:
+                if merge.ok:
+                    if (
+                        artifact_store is not None
+                        and outcome.execution_result is not None
+                        and outcome.execution_result.git_checkpoint is not None
+                    ):
+                        artifact_store.save(
+                            Artifact(
+                                artifact_id=self._unique_artifact_id(task.id, "git"),
+                                task_id=task.id,
+                                artifact_type=ArtifactType.GIT_CHECKPOINT,
+                                created_at=self._now(),
+                                metadata=list(outcome.execution_result.git_checkpoint.changed_files or []),
+                            ),
+                            json.dumps(outcome.execution_result.git_checkpoint.model_dump(), ensure_ascii=False, indent=2),
+                        )
+                else:
                     status = TaskStatus.FAILED
+                    outcome.validation_result = self._merge_conflict_result(
+                        outcome.validation_result, task.id, merge.conflicted_files
+                    )
                     if artifact_store is not None:
                         artifact_store.save(
                             Artifact(
@@ -479,6 +498,39 @@ class ExecutionOrchestrator:
 
         run.current_task_id = ""
         return True
+
+    def _merge_conflict_result(
+        self, base: ValidationResult | None, task_id: str, conflicted_files: list[str]
+    ) -> ValidationResult:
+        """Stamp a wave task's validation as FAIL for a merge conflict.
+
+        The task validated cleanly in isolation; the conflict only surfaces when
+        its branch merges back. This rewrites the result to FAIL with the
+        conflicted files as evidence while keeping the original criterion
+        history, so both the persisted record and the replan analyzer see the
+        real reason instead of a stale PASS.
+        """
+        files = list(conflicted_files)
+        evidence = "parallel merge conflict in: " + (", ".join(files) if files else "unknown paths")
+        if base is not None:
+            result = base.model_copy(deep=True)
+        else:
+            result = ValidationResult(task_id=task_id, status=ValidationStatus.FAIL)
+        result.task_id = result.task_id or task_id
+        result.status = ValidationStatus.FAIL
+        result.criterion_results.append(
+            CriterionResult(
+                criterion="Concurrent branch merges cleanly back to the shared workspace",
+                type=CriterionType.GIT,
+                status=CriterionStatus.FAIL,
+                evidence=evidence,
+                details="Task validated in isolation; failure arose from merging its worktree branch.",
+            )
+        )
+        result.changed_files = list(dict.fromkeys([*result.changed_files, *files]))
+        result.evidence.append(evidence)
+        result.failures.append(evidence)
+        return result
 
     def resume(self, run_id: str, task_graph: TaskGraph, project_map: ProjectMap, run_dir: Path) -> ExecutionRun:
         if self.persistence is None:
