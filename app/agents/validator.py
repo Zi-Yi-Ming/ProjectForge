@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.agents.sandbox_policy import SandboxPolicy
 from app.agents.scope_policy import (
     NEEDS_REVIEW,
     SCOPE_MODE_ENFORCE,
@@ -35,12 +36,21 @@ class _CommandResult:
 
 
 class DeterministicValidator:
-    def __init__(self, scope_mode: str | None = None, self_test_timeout: float = 120.0) -> None:
+    def __init__(
+        self,
+        scope_mode: str | None = None,
+        self_test_timeout: float = 120.0,
+        sandbox_policy: SandboxPolicy | None = None,
+    ) -> None:
         # Explicit > env (PROJECTFORGE_SCOPE_MODE) > default (warn).
         self.scope_mode = resolve_scope_mode(scope_mode)
         # Self-test timeout was previously hardcoded to 120s; it is now
         # configurable so it can be aligned with the runner's --timeout budget.
         self.self_test_timeout = self_test_timeout
+        # None keeps test execution on the host (the historical behavior). The
+        # real (untrusted-code) path wires a sandbox so the validator runs the
+        # same agent-authored tests the agent does, isolated from the host.
+        self.sandbox_policy = sandbox_policy
 
     def validate(
         self,
@@ -262,11 +272,16 @@ class DeterministicValidator:
 
     def _run_command(self, command: str | list[str], workspace: Path | None = None) -> _CommandResult:
         args = command if isinstance(command, list) else self._tokenize_command(command)
+        workspace = workspace or Path(".")
         try:
+            # Wrap inside the try so a missing bwrap surfaces as a failed
+            # validation (fail-closed) rather than silently running on the host
+            # or aborting the run. When no policy is set, argv is unchanged.
+            argv = self.sandbox_policy.wrap(workspace, args) if self.sandbox_policy is not None else args
             proc = subprocess.run(
-                args,
+                argv,
                 shell=False,
-                cwd=str(workspace or Path(".")),
+                cwd=str(workspace),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=self.self_test_timeout,

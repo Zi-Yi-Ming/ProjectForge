@@ -192,6 +192,22 @@ def resolve_max_parallel_workers() -> int | None:
     return None
 
 
+def resolve_validator_sandbox_enabled() -> bool:
+    """Whether the validator runs agent-authored tests inside the sandbox.
+
+    On by default: the validator executes code the agent (possibly an LLM)
+    wrote, so it is the last untrusted-code boundary and should be isolated
+    whenever a sandbox is available. Opt OUT via
+    PROJECTFORGE_VALIDATOR_SANDBOX=0|false|no|off (e.g. to debug a host-only
+    test). Has no effect where bwrap is unavailable or on the mock path, which
+    never sandbox.
+    """
+    raw = os.environ.get("PROJECTFORGE_VALIDATOR_SANDBOX", "").strip().lower()
+    if raw:
+        return raw not in {"0", "false", "no", "off"}
+    return True
+
+
 class ProjectService:
     def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None, executor_factory: Any = None, base_dir: Path | None = None, task_timeout: int | None = None) -> None:
         self.base_dir = resolve_base_dir(base_dir)
@@ -205,10 +221,26 @@ class ProjectService:
         self.run_control = run_control or RunControl(execution_persistence=JsonExecutionPersistence(base_dir=self.base_dir), persistence=self.persistence)
         self.replan_control = replan_control or ReplanControl(persistence=self.persistence, run_control=self.run_control, execution_persistence=JsonExecutionPersistence(base_dir=self.base_dir), replan_persistence=ReplanPersistence(base_dir=self.base_dir))
 
+    def _validator_sandbox_policy(self, real_execution: bool) -> Any:
+        """A sandbox policy for the validator, or None to run it on the host.
+
+        Only the real (Hermes) execution path runs agent-authored test code, so
+        only it gets sandboxed — and only when bwrap is actually available and
+        the sandbox has not been disabled. Everything else (mock runs, hosts
+        without bwrap) keeps the historical host-side behavior.
+        """
+        if not real_execution or not resolve_validator_sandbox_enabled():
+            return None
+        from app.agents.sandbox_policy import ValidatorSandboxPolicy
+
+        policy = ValidatorSandboxPolicy()
+        return policy if policy.is_available() else None
+
     def _build_executor(self, run_dir: Path) -> Any:
         from app.agents.orchestrator import ExecutionOrchestrator
 
-        if self._executor_factory is not None:
+        real_execution = self._executor_factory is None
+        if not real_execution:
             adapter = self._executor_factory(run_dir, self.task_timeout)
         else:
             from app.agents.hermes_adapter import HermesAdapter
@@ -225,7 +257,10 @@ class ProjectService:
         return ExecutionOrchestrator(
             adapter=adapter,
             artifacts_root=self.base_dir / "runs",
-            validator=DeterministicValidator(self_test_timeout=self.task_timeout),
+            validator=DeterministicValidator(
+                self_test_timeout=self.task_timeout,
+                sandbox_policy=self._validator_sandbox_policy(real_execution),
+            ),
             max_run_seconds=resolve_max_run_seconds(),
             rollback_on_failure=resolve_rollback_on_failure(),
             parallel_enabled=resolve_parallel_enabled(),

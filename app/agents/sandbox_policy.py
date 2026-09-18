@@ -71,3 +71,44 @@ class BwrapSandboxPolicy:
             sandbox_cmd.extend(["--bind", str(self._config_home), "/workspace/.hermes"])
         sandbox_cmd.extend(command)
         return sandbox_cmd
+
+
+class ValidatorSandboxPolicy:
+    """bubblewrap isolation for the deterministic validator's test execution.
+
+    The validator runs test code the agent (possibly an LLM) authored — the last
+    untrusted-code boundary before a task is trusted. Unlike the agent, it must
+    reach the project's Python interpreter and ``site-packages``, so the host is
+    mounted read-only and only the task workspace stays writable; ``/tmp`` gets a
+    tmpfs so test scratch space keeps working. The workspace stays at its real
+    path (no ``/workspace`` relocation) so ``sys.executable`` and ``cwd`` resolve
+    unchanged. It deliberately mounts no credential/config dir — running tests
+    needs none. Filesystem/pid/ipc are isolated; the host network is shared, the
+    same documented limitation as the agent sandbox.
+    """
+
+    def is_available(self) -> bool:
+        return shutil.which("bwrap") is not None
+
+    def wrap(self, workspace: Path, command: list[str]) -> list[str]:
+        if not self.is_available():
+            raise SandboxUnavailableError(
+                "bubblewrap (bwrap) is not available on this platform. "
+                "Sandboxed validation requires Linux with bwrap installed."
+            )
+        workspace = workspace.resolve()
+        sandbox_cmd = [
+            "bwrap",
+            "--unshare-ipc",
+            "--unshare-pid",
+            "--new-session",
+            "--setenv", "HOME", str(workspace),
+            "--ro-bind", "/", "/",
+            "--dev", "/dev",
+            "--proc", "/proc",
+            "--tmpfs", "/tmp",
+            "--bind", str(workspace), str(workspace),
+            "--chdir", str(workspace),
+        ]
+        sandbox_cmd.extend(command)
+        return sandbox_cmd
