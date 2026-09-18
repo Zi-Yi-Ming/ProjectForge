@@ -7,7 +7,6 @@ from typing import Any, Callable
 
 from app.product.errors import (
     ActiveRunExistsError,
-    CommandNotAllowedError,
     InvalidProjectStateError,
     InvalidStateTransitionError,
     ProjectNotFoundError,
@@ -15,7 +14,6 @@ from app.product.errors import (
 from app.product.event_store import EventStore, new_event_id
 from app.product.lifecycle import ProjectLifecycle
 from app.product.project_persistence import ProjectPersistence
-from app.product.project_artifact_store import ProjectArtifactStore
 from app.product.run_control import RunControl
 from app.agents.orchestrator import ExecutionOrchestrator
 from app.agents.persistence import JsonExecutionPersistence
@@ -24,12 +22,10 @@ from app.product.replan_control import ReplanControl
 from app.product.workflow import ProjectWorkflow
 from app.schemas.blueprint import UserProfile
 from app.schemas.event import Actor, ProductEvent
-from app.schemas.execution import ExecutionRun, ExecutionStatus
-from app.schemas.implementation import ProjectMap
+from app.schemas.execution import ExecutionStatus
 from app.schemas.project import Project, ProjectStatus
 from app.schemas.research import ResearchOutput
 from app.schemas.scoring import RepositoryScore
-from app.schemas.task import TaskGraph
 from app.schemas.replan import ReplanProposal, ReplanProposalStatus
 
 _ARTIFACT_REF_FIELDS = {
