@@ -96,7 +96,8 @@ COMPLETED / FAILED / BLOCKED
 **从 PyPI 安装（推荐）：**
 
 ```bash
-pip install jdforge
+pip install jdforge                 # CLI + 约束执行引擎（不含 Web API 栈）
+pip install "jdforge[api]"          # 追加 REST API（FastAPI）支持
 ```
 
 **开发方式（源码安装）：**
