@@ -801,6 +801,7 @@ class ExecutionOrchestrator:
             expected_output=task.expected_output,
             implementation_scope=task.implementation_scope,
             acceptance_criteria=list(task.acceptance_criteria),
+            criterion_checks=list(task.criterion_checks),
             out_of_scope=list(task.out_of_scope),
             technical_points=list(task.technical_points),
             interview_points=list(task.interview_points),

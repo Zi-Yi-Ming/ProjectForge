@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.schemas.task import Task
+from app.schemas.task import AcceptanceCheck, Task
 
 
 class ScopeStatus(str, Enum):
@@ -53,6 +53,7 @@ class TaskContract(BaseModel):
     expected_output: str = Field(default="", description="Expected deliverable.")
     implementation_scope: str = Field(default="", description="Allowed implementation scope.")
     acceptance_criteria: list[str] = Field(default_factory=list, description="Acceptance criteria.")
+    criterion_checks: list[AcceptanceCheck] = Field(default_factory=list, description="Machine-checkable verifications bound to acceptance criteria.")
     out_of_scope: list[str] = Field(default_factory=list, description="Explicitly out of scope.")
     technical_points: list[str] = Field(default_factory=list, description="Key technical points.")
     interview_points: list[str] = Field(default_factory=list, description="Interview-relevant points.")

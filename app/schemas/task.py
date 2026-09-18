@@ -30,6 +30,20 @@ class Phase(BaseModel):
     scope: str = ""
 
 
+class AcceptanceCheck(BaseModel):
+    """A machine-checkable verification bound to one acceptance criterion.
+
+    ``target`` meaning depends on ``kind``: TEST -> a pytest path/node id;
+    COMMAND -> a shell-free command; FILE -> a workspace-relative path that must
+    exist; PATTERN -> ``relative/path:regex`` that must match the file text;
+    MANUAL -> no automated check (stays a manual review item).
+    """
+
+    criterion: str = Field(default="", description="The human acceptance criterion text.")
+    kind: Literal["TEST", "COMMAND", "FILE", "PATTERN", "MANUAL"] = Field(default="MANUAL", description="How the criterion is checked.")
+    target: str = Field(default="", description="Check target interpreted per ``kind``.")
+
+
 class Task(BaseModel):
     id: str
     phase_id: str
@@ -43,6 +57,7 @@ class Task(BaseModel):
     expected_output: str = ""
     implementation_scope: str = ""
     acceptance_criteria: list[str] = Field(default_factory=list)
+    criterion_checks: list[AcceptanceCheck] = Field(default_factory=list)
     out_of_scope: list[str] = Field(default_factory=list)
     technical_points: list[str] = Field(default_factory=list)
     interview_points: list[str] = Field(default_factory=list)

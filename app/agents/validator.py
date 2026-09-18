@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 import sys
@@ -41,6 +42,7 @@ class DeterministicValidator:
         scope_mode: str | None = None,
         self_test_timeout: float = 120.0,
         sandbox_policy: SandboxPolicy | None = None,
+        criteria_mode: str = "observe",
     ) -> None:
         # Explicit > env (PROJECTFORGE_SCOPE_MODE) > default (warn).
         self.scope_mode = resolve_scope_mode(scope_mode)
@@ -51,6 +53,10 @@ class DeterministicValidator:
         # real (untrusted-code) path wires a sandbox so the validator runs the
         # same agent-authored tests the agent does, isolated from the host.
         self.sandbox_policy = sandbox_policy
+        # observe: record each machine-checkable acceptance criterion's verdict
+        # without changing the task outcome; require: a failed check blocks DONE.
+        # Default observe so shipping the plumbing changes nothing.
+        self.criteria_mode = criteria_mode
 
     def validate(
         self,
@@ -96,6 +102,10 @@ class DeterministicValidator:
                     )
                 )
             manual_review_items.append(criterion)
+
+        self._evaluate_criterion_checks(
+            task_contract, criterion_results, warnings, evidence, manual_review_items, workspace=workspace
+        )
 
         changed_files = implementation_result.changed_files or []
         allowed_paths = task_contract.allowed_paths or []
@@ -260,6 +270,80 @@ class DeterministicValidator:
             )
             failures.append("Self-test execution failed.")
         return command_result
+
+    @staticmethod
+    def _criterion_type_for(kind: str) -> CriterionType:
+        return {
+            "TEST": CriterionType.TEST,
+            "COMMAND": CriterionType.COMMAND,
+            "FILE": CriterionType.FILE,
+            "PATTERN": CriterionType.PATTERN,
+        }.get(kind.upper(), CriterionType.MANUAL)
+
+    def _run_acceptance_check(self, check: Any, workspace: Path | None = None) -> tuple[bool, str]:
+        # Returns (passed, evidence). Never raises — a crash is reported as a
+        # failed check so one malformed criterion cannot take down validation.
+        kind = (getattr(check, "kind", "") or "MANUAL").upper()
+        target = getattr(check, "target", "") or ""
+        ws = Path(workspace) if workspace else Path(".")
+        try:
+            if kind == "TEST":
+                res = self._run_command([sys.executable, "-m", "pytest", "-q", target], workspace=ws)
+                return res.exit_code == 0, f"pytest {target} -> exit={res.exit_code}"
+            if kind == "COMMAND":
+                res = self._run_command(target, workspace=ws)
+                return res.exit_code == 0, f"command {target!r} -> exit={res.exit_code}"
+            if kind == "FILE":
+                exists = (ws / target).exists()
+                return exists, f"file {target} exists={exists}"
+            if kind == "PATTERN":
+                path, sep, regex = target.partition(":")
+                target_file = ws / path
+                if not sep or not target_file.exists():
+                    return False, f"pattern target missing/invalid: {target}"
+                text = target_file.read_text(encoding="utf-8", errors="replace")
+                matched = re.search(regex, text) is not None
+                return matched, f"regex {regex!r} in {path} matched={matched}"
+            return False, f"unsupported acceptance-check kind {kind!r}"
+        except Exception as exc:
+            return False, f"acceptance check {kind} errored: {exc}"
+
+    def _evaluate_criterion_checks(
+        self,
+        task_contract: Any,
+        criterion_results: list[CriterionResult],
+        warnings: list[str],
+        evidence: list[str],
+        manual_review_items: list[str],
+        workspace: Path | None = None,
+    ) -> None:
+        checks = getattr(task_contract, "criterion_checks", None) or []
+        if not checks:
+            return
+        require = self.criteria_mode == "require"
+        for check in checks:
+            kind = (getattr(check, "kind", "") or "MANUAL").upper()
+            label = getattr(check, "criterion", "") or f"{kind}:{getattr(check, 'target', '')}"
+            if kind == "MANUAL":
+                manual_review_items.append(label)
+                continue
+            ok, detail = self._run_acceptance_check(check, workspace=workspace)
+            ctype = self._criterion_type_for(kind)
+            if ok:
+                criterion_results.append(
+                    CriterionResult(criterion=label, type=ctype, status=CriterionStatus.PASS,
+                                    evidence=detail, details="acceptance check passed.")
+                )
+            elif require:
+                criterion_results.append(
+                    CriterionResult(criterion=label, type=ctype, status=CriterionStatus.FAIL,
+                                    evidence=detail, details="acceptance check failed.")
+                )
+            else:
+                # observe: surface the verdict without letting it change the outcome
+                note = f"acceptance check would fail (observe): {label} -> {detail}"
+                warnings.append(note)
+                evidence.append(note)
 
     @staticmethod
     def _tokenize_command(command: str) -> list[str]:
