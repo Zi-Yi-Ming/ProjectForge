@@ -56,13 +56,12 @@ class ProjectWorkflow:
         self,
         jd_profile: JDProfile,
         research_output: ResearchOutput,
-        project_fit: ProjectFit,
+        project_fit: ProjectFit | None,
         repository_score: RepositoryScore,
         user_profile: UserProfile,
     ) -> ProjectBlueprint:
         self._require(jd_profile, "jd_profile")
         self._require(research_output, "research_output")
-        self._require(project_fit, "project_fit")
         self._require(repository_score, "repository_score")
         self._require(user_profile, "user_profile")
         return self.blueprint_agent.build(jd_profile, research_output, project_fit, repository_score, user_profile)

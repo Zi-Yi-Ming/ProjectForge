@@ -40,17 +40,20 @@ class RuleBasedPlanner:
         jd_profile: JDProfile = self._workflow.analyze_jd(jd_text)
         if user_profile is None:
             user_profile = self._derive_user_profile(jd_profile)
+        # No reference/research layer is produced anymore, so the rule planner
+        # no longer fabricates a project_fit (it would only be an all-zero,
+        # misleading number). research/score stay as neutral inputs to the
+        # blueprint's language/feature defaults; project_fit is None.
         research = ResearchOutput()
         score = RepositoryScore()
-        project_fit = self._workflow.build_match(jd_profile, research, score)
         blueprint: ProjectBlueprint = self._workflow.build_blueprint(
-            jd_profile, research, project_fit, score, user_profile
+            jd_profile, research, None, score, user_profile
         )
         task_graph = self._workflow.build_task_graph(blueprint)
         return PlanningResult(
             planner_name="rule",
             jd_profile=jd_profile,
-            project_fit=project_fit,
+            project_fit=None,
             blueprint=blueprint,
             task_graph=task_graph,
         )

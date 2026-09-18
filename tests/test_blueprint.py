@@ -87,7 +87,7 @@ def test_source_repo_comes_from_research() -> None:
     blueprint = blueprint_agent.build(jd, _make_research(), _make_fit(), _make_score(), _make_user())
 
     assert blueprint.source_repo == "spring-projects/spring-boot"
-    assert blueprint.source_mode == "reference"
+    assert blueprint.source_mode == "generated"
 
 
 def test_reference_points_are_safe() -> None:
@@ -99,7 +99,7 @@ def test_reference_points_are_safe() -> None:
         assert isinstance(point, str)
 
 
-def test_jd_mapping_reuses_project_fit() -> None:
+def test_jd_mapping_derives_from_jd() -> None:
     jd = JDProfile(
         required_skills=["Java", "Spring Boot", "MySQL", "MyBatis", "Redis"],
         preferred_skills=["Docker"],
@@ -110,9 +110,12 @@ def test_jd_mapping_reuses_project_fit() -> None:
     assert "Java" in blueprint.jd_skill_mapping
     assert "MyBatis" in blueprint.jd_skill_mapping
     assert "Docker" in blueprint.jd_skill_mapping
-    assert blueprint.engineering_topic_mapping["REST API"] == "参考项目已有相关工程线索，建议保留并在新项目中解释设计选择。"
-    assert blueprint.engineering_topic_mapping["Debugging"] == "参考项目未明确体现，建议根据真实业务需要新增工程方案。"
-    assert "最终匹配得分为 78" in blueprint.project_fit_summary
+    assert blueprint.jd_skill_mapping["Java"].startswith("本计划需覆盖")
+    assert blueprint.jd_skill_mapping["Docker"].startswith("加分项")
+    assert blueprint.engineering_topic_mapping["REST API"].startswith("本计划将体现")
+    # honest summary: no fabricated reference-project coverage / fit score
+    assert "参考项目" not in blueprint.project_fit_summary
+    assert "匹配得分" not in blueprint.project_fit_summary
 
 
 def test_business_scenario_exists() -> None:
@@ -205,7 +208,8 @@ def test_no_external_research_or_github_call() -> None:
     blueprint = blueprint_agent.build(jd, _make_research(), _make_fit(), _make_score(), _make_user())
 
     assert blueprint.project_fit_summary
-    assert "最终匹配得分为 78" in blueprint.project_fit_summary
+    assert "匹配得分" not in blueprint.project_fit_summary
+    assert blueprint.source_mode == "generated"
 
 
 def test_determinism() -> None:
@@ -234,4 +238,4 @@ def test_e2e_with_real_fixtures() -> None:
     assert blueprint.interview_topics is not None
     assert blueprint.recommended_scope
     assert "Java" in blueprint.technology_stack
-    assert "最终匹配得分为" in blueprint.project_fit_summary
+    assert "匹配得分" not in blueprint.project_fit_summary

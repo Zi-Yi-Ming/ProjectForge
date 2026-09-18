@@ -411,11 +411,9 @@ class ProjectService:
         self.update_artifact_ref(project_id, "jd_profile", jd_ref)
 
         self.transition_to(project_id, ProjectStatus.PLANNING)
-        project_fit = workflow.build_match(jd_profile, research_output, repository_score)
-        blueprint = workflow.build_blueprint(jd_profile, research_output, project_fit, repository_score, user_profile)
+        blueprint = workflow.build_blueprint(jd_profile, research_output, None, repository_score, user_profile)
         task_graph = workflow.build_task_graph(blueprint)
 
-        workflow.persist_project_fit(project_id, project_fit)
         bp_ref = workflow.persist_blueprint(project_id, blueprint)
         tg_ref = workflow.persist_task_graph(project_id, task_graph)
 

@@ -141,7 +141,7 @@ _ENGINEERING_TOPIC_DESCRIPTIONS: dict[str, dict[str, str]] = {
 class _BlueprintContext:
     jd: JDProfile
     research: ResearchOutput
-    fit: ProjectFit
+    fit: ProjectFit | None
     score: RepositoryScore
     user: UserProfile
     scope_levels: list[ScopeLevel]
@@ -180,27 +180,19 @@ def _scope_by_user(ctx: _BlueprintContext) -> tuple[ScopeLevel, ScopeLevel, str]
 
 def _jd_mappings(ctx: _BlueprintContext) -> tuple[dict[str, str], dict[str, str], str]:
     jd_skill_mapping: dict[str, str] = {}
-    for skill in ctx.fit.matched_required_skills:
-        jd_skill_mapping[skill] = f"在参考项目中存在 {skill} 相关事实，建议在新项目中保留该能力并给出可验证实现。"
-    for skill in ctx.fit.missing_required_skills:
-        jd_skill_mapping[skill] = "当前参考项目未发现明确证据，建议作为新项目必须补齐的核心能力。"
-    for skill in ctx.fit.matched_preferred_skills:
-        jd_skill_mapping[skill] = "属于加分项，建议在实现中增加可展示的扩展能力。"
-    for skill in ctx.fit.missing_preferred_skills:
-        jd_skill_mapping[skill] = "当前参考项目未发现明确证据，可作为时间充足时的可选增强。"
+    for skill in ctx.jd.required_skills:
+        jd_skill_mapping[skill] = "本计划需覆盖的 JD 核心能力，逐项落到任务并给出可核验产出。"
+    for skill in ctx.jd.preferred_skills:
+        jd_skill_mapping[skill] = "加分项：可作为可展示的扩展能力，按时间取舍。"
 
     engineering_topic_mapping: dict[str, str] = {}
-    for topic in ctx.fit.matched_engineering_topics:
-        engineering_topic_mapping[topic] = "参考项目已有相关工程线索，建议保留并在新项目中解释设计选择。"
-    for topic in ctx.fit.missing_engineering_topics:
-        engineering_topic_mapping[topic] = "参考项目未明确体现，建议根据真实业务需要新增工程方案。"
+    for topic in ctx.jd.engineering_topics:
+        engineering_topic_mapping[topic] = "本计划将体现的工程主题，需能在面试中解释设计取舍。"
 
     summary = (
-        f"参考项目与 JD 的 required skill 覆盖率为 {ctx.fit.required_skill_coverage}%，"
-        f"engineering topic 覆盖率为 {ctx.fit.engineering_topic_coverage}%，"
-        f"preferred skill 覆盖率为 {ctx.fit.preferred_skill_coverage}%，"
-        f"项目质量分为 {ctx.fit.project_quality_score}，"
-        f"最终匹配得分为 {ctx.fit.score}。"
+        f"本蓝图围绕 JD 的 {len(ctx.jd.required_skills)} 项必备能力与 "
+        f"{len(ctx.jd.engineering_topics)} 项工程主题设计，另有 "
+        f"{len(ctx.jd.preferred_skills)} 项加分项可选增强；能力→任务的映射见 jd_skill_mapping。"
     )
     return jd_skill_mapping, engineering_topic_mapping, summary
 
@@ -283,7 +275,7 @@ class BlueprintAgent:
         self,
         jd: JDProfile,
         research: ResearchOutput,
-        fit: ProjectFit,
+        fit: ProjectFit | None,
         score: RepositoryScore,
         user: UserProfile,
     ) -> ProjectBlueprint:
@@ -303,20 +295,16 @@ class BlueprintAgent:
         interview_topics, likely_questions, expected_understanding = _interview_entries(ctx)
 
         reference_points = [
-            point
-            for point in ctx.fit.matched_required_skills[:3]
-            if point in {ctx.research.github.language, *ctx.research.github.topics, *ctx.research.key_points, *ctx.research.technical_details}
-        ]
-        if not reference_points:
-            reference_points = ctx.fit.matched_required_skills[:3] or ["项目整体结构"]
+            skill for skill in ctx.jd.required_skills[:3]
+        ] or ["核心能力覆盖"]
 
         return ProjectBlueprint(
             name=user.target_role or jd.role or "Project Blueprint",
             one_line_description=template["one_line"],
             business_domain=template["business_domain"],
             project_type=template["project_type"],
-            source_repo=ctx.research.topic or ctx.fit.repo or "",
-            source_mode="reference",
+            source_repo=ctx.research.topic or "",
+            source_mode="generated",
             reference_points=reference_points,
             business_scenario=template["core_problem"],
             target_users=template["target_users"],
@@ -428,6 +416,6 @@ class BlueprintAgent:
             "关键模块的职责划分与调用关系。",
             "至少一个核心技术点的设计理由。",
         ]
-        if ctx.fit.matched_engineering_topics:
-            points.append(f"围绕 {', '.join(ctx.fit.matched_engineering_topics[:2])} 做深度解释。")
+        if ctx.jd.engineering_topics:
+            points.append(f"围绕 {', '.join(ctx.jd.engineering_topics[:2])} 做深度解释。")
         return points
