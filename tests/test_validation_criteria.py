@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.agents.replanner import Replanner
-from app.product.replan_applier import ProductReplanApplier
+from app.agents.replan_applier import ReplanApplier
 from app.schemas.execution import ExecutionRun, ExecutionStatus as RunExecutionStatus
 from app.schemas.implementation import (
     AgentExecutionResult,
@@ -144,7 +144,7 @@ def test_product_applier_applies_split_proposal() -> None:
     proposal = _proposal(RecommendedAction.SPLIT, graph)
     assert proposal is not None and proposal.action == ReplanAction.SPLIT
     proposal.status = ReplanProposalStatus.APPROVED
-    result = ProductReplanApplier().apply(proposal, graph)
+    result = ReplanApplier().apply(proposal, graph)
     assert result.success
     ids = [t.id for t in graph.tasks]
     assert "T1a" in ids and "T1b" in ids
@@ -157,7 +157,7 @@ def test_product_applier_applies_block_proposal() -> None:
     proposal = _proposal(RecommendedAction.BLOCK, graph)
     assert proposal is not None and proposal.action == ReplanAction.BLOCK
     proposal.status = ReplanProposalStatus.APPROVED
-    result = ProductReplanApplier().apply(proposal, graph)
+    result = ReplanApplier().apply(proposal, graph)
     assert result.success
     assert graph.tasks[0].status == TaskStatus.BLOCKED
 
@@ -167,7 +167,7 @@ def test_product_applier_rejects_duplicate_split_ids() -> None:
     graph.tasks.append(Task(id="T1a", phase_id="P1", title="dup", goal="g", why="w", status=TaskStatus.PENDING, scope="Core"))
     proposal = _proposal(RecommendedAction.SPLIT, graph)
     proposal.status = ReplanProposalStatus.APPROVED
-    result = ProductReplanApplier().apply(proposal, graph)
+    result = ReplanApplier().apply(proposal, graph)
     assert not result.success
     assert any("Duplicate" in f for f in result.failures)
 
@@ -237,7 +237,7 @@ def test_add_dependency_proposal_is_rejected() -> None:
         proposed_changes=[ReplanChange(change_type=ReplanChangeType.ADD_DEPENDENCY, task_id="T2", target_task_id="T1", title="dep", description="d")],
         requires_user_approval=True, status=ReplanProposalStatus.APPROVED,
     )
-    result = ProductReplanApplier().apply(proposal, graph)
+    result = ReplanApplier().apply(proposal, graph)
     assert not result.success
     assert any("Unknown action" in f and "ADD_DEPENDENCY" in f for f in result.failures)
     # T1 dependencies unchanged

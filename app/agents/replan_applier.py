@@ -74,8 +74,6 @@ class ReplanApplier:
     def _validate_proposal(self, proposal: ReplanProposal, task_graph: TaskGraph) -> list[str]:
         if proposal.status != ReplanProposalStatus.APPROVED:
             return [f"Proposal must be APPROVED; current status={proposal.status.value}"]
-        if proposal.requires_user_approval and proposal.status != ReplanProposalStatus.APPROVED:
-            return ["Proposal requires user approval."]
         task_map = {t.id: t for t in task_graph.tasks}
         if proposal.task_id not in task_map:
             return [f"Task not found: {proposal.task_id}"]
@@ -88,9 +86,12 @@ class ReplanApplier:
                     return [f"Duplicate new task id: {change.target_task_id}"]
         if any(t.status == TaskStatus.DONE for t in task_graph.tasks if t.id in proposal.affected_task_ids and t.id != proposal.task_id):
             return ["Proposal affects DONE task."]
-        forbidden = {"MODIFY_BLUEPRINT", "MODIFY_ARCHITECTURE", "DELETE_DONE_TASK", "REWRITE_PROJECT"}
-        if any(f in forbidden for f in proposal.forbidden_changes):
-            return ["Proposal requests forbidden changes."]
+        # ``proposal.forbidden_changes`` is declarative metadata: the Replanner
+        # always lists what a replan must NOT do (blueprint/architecture/DONE).
+        # Those guarantees are structural here — apply() only handles
+        # RETRY/SPLIT/BLOCK on the task graph, every other action falls through
+        # to the "Unknown action" rejection, and DONE tasks are guarded above —
+        # so there is nothing to enforce against the list itself.
         return []
 
     def _validate_task_graph(self, task_graph: TaskGraph) -> TaskGraphValidation:

@@ -66,3 +66,17 @@ def test_apply_failure_does_not_mutate_graph():
     graph = _base_graph()
     applier.apply(proposal, graph)
     assert graph.tasks[1].status == TaskStatus.FAILED
+
+
+def test_standard_forbidden_changes_list_does_not_block_apply():
+    # Replanner stamps every proposal with the "must not touch" guard list; that
+    # is declarative metadata, not a request to perform those actions, so a
+    # legitimate approved RETRY carrying it must still apply.
+    applier = ReplanApplier()
+    proposal = _proposed(ReplanAction.RETRY)
+    proposal.forbidden_changes = ["MODIFY_BLUEPRINT", "MODIFY_ARCHITECTURE", "DELETE_DONE_TASK", "REWRITE_PROJECT"]
+    proposal.requires_user_approval = True
+    graph = _base_graph()
+    result = applier.apply(proposal, graph)
+    assert result.success is True
+    assert graph.tasks[1].status == TaskStatus.PENDING

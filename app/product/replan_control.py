@@ -7,7 +7,6 @@ from typing import Any, Callable
 from app.agents.failure_analyzer import FailureAnalyzer
 from app.agents.replanner import Replanner
 from app.agents.replan_applier import ReplanApplier
-from app.product.replan_applier import ProductReplanApplier
 from app.agents.replan_persistence import ReplanPersistence
 from app.product.errors import (
     InvalidProjectStateError,
@@ -45,7 +44,7 @@ class ReplanControl:
         self.execution_persistence = execution_persistence
         self.failure_analyzer = failure_analyzer or FailureAnalyzer()
         self.replanner = replanner or Replanner()
-        self.replan_applier = replan_applier or ProductReplanApplier()
+        self.replan_applier = replan_applier or ReplanApplier()
         self.replan_persistence = replan_persistence or ReplanPersistence()
         self._on_proposal_created = on_proposal_created
         self._on_proposal_approved = on_proposal_approved
