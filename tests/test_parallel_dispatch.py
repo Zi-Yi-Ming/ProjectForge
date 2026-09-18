@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import subprocess
+
+import pytest
+
 from pathlib import Path
 
 from app.agents.artifact_store import ArtifactStore
@@ -267,3 +270,64 @@ def test_post_merge_integration_result_preserves_base_without_mutating() -> None
     assert len(result.criterion_results) == 2  # isolation-passed TEST kept + integration FAIL appended
     assert base.status == ValidationStatus.PASS  # deep copy: base untouched
     assert len(base.criterion_results) == 1
+
+
+class _IntegrationRaisingValidator:
+    """PASS in an isolated worktree; raise when asked to validate the integrated
+    run_dir — simulating the Phase 2 re-validation blowing up mid-wave."""
+
+    def __init__(self, run_dir: Path) -> None:
+        self._run_dir = Path(run_dir).resolve()
+
+    def validate(self, task_id, contract, execution_result, workspace=None):
+        ws = Path(workspace).resolve() if workspace else None
+        if ws is not None and ws == self._run_dir:
+            raise RuntimeError("validator crashed on integrated tree")
+        return ValidationResult(task_id=task_id, status=ValidationStatus.PASS)
+
+
+def _leaked_pf_branches(run_dir: Path) -> list[str]:
+    out = subprocess.run(
+        ["git", "branch", "--format=%(refname:short)"], cwd=str(run_dir), capture_output=True, text=True
+    ).stdout
+    return [b for b in out.splitlines() if b.startswith("pf/")]
+
+
+def test_wave_survives_merge_exception_as_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.agents.worktree as wt
+
+    def _boom(self, branch):
+        raise RuntimeError("git merge timeout")
+
+    monkeypatch.setattr(wt.WorktreeManager, "merge", _boom)
+    run_dir = tmp_path / "ws"
+    run_dir.mkdir(parents=True)
+    orch = ExecutionOrchestrator(adapter=_BranchCommittingExecutor(workspace=run_dir), parallel_enabled=True)
+
+    run = orch.run(_graph_two_independent(), ProjectMap(), run_dir=run_dir)
+
+    # a merge that raises is a per-task failure, not a crashed wave
+    assert run.task_results
+    assert all(rec.status == TaskStatus.FAILED.value for rec in run.task_results)
+    assert _leaked_pf_branches(run_dir) == []
+
+
+def test_wave_reclaims_worktrees_when_integration_validation_raises(tmp_path: Path) -> None:
+    run_dir = tmp_path / "ws"
+    run_dir.mkdir(parents=True)
+    orch = ExecutionOrchestrator(
+        adapter=_BranchCommittingExecutor(workspace=run_dir),
+        validator=_IntegrationRaisingValidator(run_dir),
+        aggregation=_PassthroughAggregation(),
+        parallel_enabled=True,
+    )
+
+    with pytest.raises(RuntimeError):
+        orch.run(_graph_two_independent(), ProjectMap(), run_dir=run_dir)
+
+    # despite the mid-loop throw, the finally reclaimed every worktree/branch
+    assert _leaked_pf_branches(run_dir) == []
+    worktrees = subprocess.run(
+        ["git", "worktree", "list"], cwd=str(run_dir), capture_output=True, text=True
+    ).stdout
+    assert len([line for line in worktrees.splitlines() if line.strip()]) == 1

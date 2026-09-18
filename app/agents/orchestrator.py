@@ -342,7 +342,7 @@ class ExecutionOrchestrator:
         """
         from concurrent.futures import ThreadPoolExecutor
 
-        from app.agents.worktree import WorktreeError, WorktreeManager
+        from app.agents.worktree import MergeResult, WorktreeError, WorktreeManager
         from app.agents.workspace_provider import WorktreeWorkspaceProvider
 
         if run_dir is None:
@@ -412,126 +412,137 @@ class ExecutionOrchestrator:
         finally:
             self.adapter.workspace_provider = original_provider
 
-        # Phase 1: merge every branch that validated in isolation back into the
-        # shared workspace. A conflict is a real failure even though the task
-        # passed alone. Worktrees are reclaimed here; run_dir now holds the
-        # integrated tree. Records are finalized later so re-validation can see
-        # every sibling's merge.
-        for outcome in outcomes:
-            task = outcome.task
-            if outcome.status == TaskStatus.DONE:
-                merge = mgr.merge(outcome.branch)
-                if merge.ok:
-                    if (
-                        artifact_store is not None
-                        and outcome.execution_result is not None
-                        and outcome.execution_result.git_checkpoint is not None
-                    ):
-                        artifact_store.save(
-                            Artifact(
-                                artifact_id=self._unique_artifact_id(task.id, "git"),
-                                task_id=task.id,
-                                artifact_type=ArtifactType.GIT_CHECKPOINT,
-                                created_at=self._now(),
-                                metadata=list(outcome.execution_result.git_checkpoint.changed_files or []),
-                            ),
-                            json.dumps(outcome.execution_result.git_checkpoint.model_dump(), ensure_ascii=False, indent=2),
+        try:
+            # Phase 1: merge every branch that validated in isolation back into
+            # the shared workspace. A conflict — or a merge that itself errors —
+            # is a real failure even though the task passed alone. Records are
+            # finalized later so re-validation sees every sibling's merge.
+            for outcome in outcomes:
+                task = outcome.task
+                if outcome.status == TaskStatus.DONE:
+                    try:
+                        merge = mgr.merge(outcome.branch)
+                    except Exception as exc:  # git timeout / transient git error
+                        merge = MergeResult(ok=False, conflicted_files=[f"merge raised: {exc}"], detail=str(exc))
+                    if merge.ok:
+                        if (
+                            artifact_store is not None
+                            and outcome.execution_result is not None
+                            and outcome.execution_result.git_checkpoint is not None
+                        ):
+                            artifact_store.save(
+                                Artifact(
+                                    artifact_id=self._unique_artifact_id(task.id, "git"),
+                                    task_id=task.id,
+                                    artifact_type=ArtifactType.GIT_CHECKPOINT,
+                                    created_at=self._now(),
+                                    metadata=list(outcome.execution_result.git_checkpoint.changed_files or []),
+                                ),
+                                json.dumps(outcome.execution_result.git_checkpoint.model_dump(), ensure_ascii=False, indent=2),
+                            )
+                    else:
+                        outcome.status = TaskStatus.FAILED
+                        outcome.validation_result = self._merge_conflict_result(
+                            outcome.validation_result, task.id, merge.conflicted_files
                         )
-                else:
+                        if artifact_store is not None:
+                            artifact_store.save(
+                                Artifact(
+                                    artifact_id=self._unique_artifact_id(task.id, "conflict"),
+                                    task_id=task.id,
+                                    artifact_type=ArtifactType.ERROR_LOG,
+                                    created_at=self._now(),
+                                    metadata=["MERGE_CONFLICT", *merge.conflicted_files],
+                                ),
+                                json.dumps({"conflicted_files": merge.conflicted_files}, ensure_ascii=False, indent=2),
+                            )
+
+            # Phase 2: re-validate merged tasks against the *integrated* workspace.
+            # Each branch only proved its own tests against base_head in isolation;
+            # a sibling's change — or the combination — can still break them. This
+            # is what serial gets implicitly (later validations run on cumulative
+            # state) and the parallel path must do explicitly after the merge.
+            for outcome in outcomes:
+                if outcome.status != TaskStatus.DONE or outcome.execution_result is None:
+                    continue
+                integrated_contract = self._build_contract(outcome.task, project_map, run_dir=run_dir)
+                integrated = self.validator.validate(
+                    outcome.task.id, integrated_contract, outcome.execution_result, workspace=run_dir
+                )
+                if integrated.status == ValidationStatus.FAIL:
                     outcome.status = TaskStatus.FAILED
-                    outcome.validation_result = self._merge_conflict_result(
-                        outcome.validation_result, task.id, merge.conflicted_files
+                    outcome.validation_result = self._post_merge_integration_result(
+                        outcome.validation_result, outcome.task.id, integrated
                     )
                     if artifact_store is not None:
                         artifact_store.save(
                             Artifact(
-                                artifact_id=self._unique_artifact_id(task.id, "conflict"),
-                                task_id=task.id,
+                                artifact_id=self._unique_artifact_id(outcome.task.id, "integration"),
+                                task_id=outcome.task.id,
                                 artifact_type=ArtifactType.ERROR_LOG,
                                 created_at=self._now(),
-                                metadata=["MERGE_CONFLICT", *merge.conflicted_files],
+                                metadata=["POST_MERGE_INTEGRATION_FAIL"],
                             ),
-                            json.dumps({"conflicted_files": merge.conflicted_files}, ensure_ascii=False, indent=2),
+                            json.dumps(integrated.model_dump(), ensure_ascii=False, indent=2),
                         )
-            mgr.remove(outcome.worktree, outcome.branch)
-            provider.unbind(task.id)
 
-        # Phase 2: re-validate merged tasks against the *integrated* workspace.
-        # Each branch only proved its own tests against base_head in isolation;
-        # a sibling's change — or the combination — can still break them. This
-        # is what serial gets implicitly (later validations run on cumulative
-        # state) and the parallel path must do explicitly after the merge.
-        for outcome in outcomes:
-            if outcome.status != TaskStatus.DONE or outcome.execution_result is None:
-                continue
-            integrated_contract = self._build_contract(outcome.task, project_map, run_dir=run_dir)
-            integrated = self.validator.validate(
-                outcome.task.id, integrated_contract, outcome.execution_result, workspace=run_dir
-            )
-            if integrated.status == ValidationStatus.FAIL:
-                outcome.status = TaskStatus.FAILED
-                outcome.validation_result = self._post_merge_integration_result(
-                    outcome.validation_result, outcome.task.id, integrated
+            # Phase 3: finalize each outcome (status, record, persistence,
+            # artifacts, replan) once its integration verdict is settled.
+            for outcome in outcomes:
+                task = outcome.task
+                status = outcome.status
+                task.status = status
+
+                record = TaskExecutionRecord(
+                    task_id=task.id,
+                    phase=task.phase_id,
+                    title=task.title,
+                    status=status.value,
+                    contract=outcome.contract,
+                    execution_result=outcome.execution_result,
+                    validation_result=outcome.validation_result,
+                    started_at=outcome.started_at,
+                    finished_at=outcome.finished_at,
                 )
-                if artifact_store is not None:
+                run.task_results.append(record)
+                if self.persistence is not None:
+                    self.persistence.save_task_record(run.run_id, record)
+
+                if artifact_store is not None and outcome.execution_result is not None and status != TaskStatus.DONE:
                     artifact_store.save(
                         Artifact(
-                            artifact_id=self._unique_artifact_id(outcome.task.id, "integration"),
-                            task_id=outcome.task.id,
-                            artifact_type=ArtifactType.ERROR_LOG,
+                            artifact_id=self._unique_artifact_id(task.id, "output"),
+                            task_id=task.id,
+                            artifact_type=ArtifactType.AGENT_OUTPUT,
                             created_at=self._now(),
-                            metadata=["POST_MERGE_INTEGRATION_FAIL"],
+                            metadata=[outcome.execution_result.status],
                         ),
-                        json.dumps(integrated.model_dump(), ensure_ascii=False, indent=2),
+                        json.dumps(outcome.execution_result.model_dump(), ensure_ascii=False, indent=2),
+                    )
+                if artifact_store is not None and outcome.validation_result is not None:
+                    artifact_store.save(
+                        Artifact(
+                            artifact_id=self._unique_artifact_id(task.id, "validation"),
+                            task_id=task.id,
+                            artifact_type=ArtifactType.VALIDATION_RESULT,
+                            created_at=self._now(),
+                            metadata=[outcome.validation_result.status.value],
+                        ),
+                        json.dumps(outcome.validation_result.model_dump(), ensure_ascii=False, indent=2),
                     )
 
-        # Phase 3: finalize each outcome (status, record, persistence,
-        # artifacts, replan) once its integration verdict is settled.
-        for outcome in outcomes:
-            task = outcome.task
-            status = outcome.status
-            task.status = status
-
-            record = TaskExecutionRecord(
-                task_id=task.id,
-                phase=task.phase_id,
-                title=task.title,
-                status=status.value,
-                contract=outcome.contract,
-                execution_result=outcome.execution_result,
-                validation_result=outcome.validation_result,
-                started_at=outcome.started_at,
-                finished_at=outcome.finished_at,
-            )
-            run.task_results.append(record)
-            if self.persistence is not None:
-                self.persistence.save_task_record(run.run_id, record)
-
-            if artifact_store is not None and outcome.execution_result is not None and status != TaskStatus.DONE:
-                artifact_store.save(
-                    Artifact(
-                        artifact_id=self._unique_artifact_id(task.id, "output"),
-                        task_id=task.id,
-                        artifact_type=ArtifactType.AGENT_OUTPUT,
-                        created_at=self._now(),
-                        metadata=[outcome.execution_result.status],
-                    ),
-                    json.dumps(outcome.execution_result.model_dump(), ensure_ascii=False, indent=2),
-                )
-            if artifact_store is not None and outcome.validation_result is not None:
-                artifact_store.save(
-                    Artifact(
-                        artifact_id=self._unique_artifact_id(task.id, "validation"),
-                        task_id=task.id,
-                        artifact_type=ArtifactType.VALIDATION_RESULT,
-                        created_at=self._now(),
-                        metadata=[outcome.validation_result.status.value],
-                    ),
-                    json.dumps(outcome.validation_result.model_dump(), ensure_ascii=False, indent=2),
-                )
-
-            if status == TaskStatus.FAILED and self._replan_enabled():
-                self._maybe_generate_replan(run, task, task_graph, outcome.contract, outcome.execution_result, outcome.validation_result)
+                if status == TaskStatus.FAILED and self._replan_enabled():
+                    self._maybe_generate_replan(run, task, task_graph, outcome.contract, outcome.execution_result, outcome.validation_result)
+        finally:
+            # Reclaim every worktree/branch no matter how the merge, the
+            # integrated re-validation, or persistence ended. Best-effort per
+            # entry so one stuck removal cannot strand the rest.
+            for task, branch, worktree in plans:
+                try:
+                    mgr.remove(worktree, branch)
+                except Exception:
+                    pass
+                provider.unbind(task.id)
 
         run.current_task_id = ""
         return True
