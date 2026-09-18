@@ -49,6 +49,9 @@ class ReplanApplier:
                         out_of_scope=list(failed_task.out_of_scope),
                         technical_points=list(failed_task.technical_points),
                         interview_points=list(failed_task.interview_points),
+                        test_command=failed_task.test_command,
+                        test_paths=list(failed_task.test_paths),
+                        allowed_paths=list(failed_task.allowed_paths),
                         status=TaskStatus.PENDING,
                     )
                     task_graph.tasks.append(new_task)

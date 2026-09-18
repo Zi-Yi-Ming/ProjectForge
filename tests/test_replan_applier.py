@@ -80,3 +80,41 @@ def test_standard_forbidden_changes_list_does_not_block_apply():
     result = applier.apply(proposal, graph)
     assert result.success is True
     assert graph.tasks[1].status == TaskStatus.PENDING
+
+
+def _split_graph():
+    parent = Task(
+        id="T1", phase_id="P1", title="T1", goal="g", why="w", dependencies=[], scope="Core",
+        status=TaskStatus.FAILED, acceptance_criteria=[], out_of_scope=[],
+        test_command="pytest -q tests/unit", test_paths=["tests/unit"], allowed_paths=["src/app"],
+    )
+    return TaskGraph(project="demo", phases=[], tasks=[parent], total_tasks=1, required_tasks=1, optional_tasks=0)
+
+
+def _split_proposal():
+    return ReplanProposal(
+        proposal_id="p-split", run_id="run-1", task_id="T1", action=ReplanAction.SPLIT,
+        status=ReplanProposalStatus.APPROVED, affected_task_ids=["T1", "T1a", "T1b"],
+        proposed_changes=[
+            ReplanChange(change_type=ReplanChangeType.ADD_TASK, task_id="T1", target_task_id="T1a", title="T1 (a)", description="part a"),
+            ReplanChange(change_type=ReplanChangeType.ADD_TASK, task_id="T1", target_task_id="T1b", title="T1 (b)", description="part b"),
+        ],
+    )
+
+
+def test_split_children_inherit_test_and_scope_fields():
+    applier = ReplanApplier()
+    graph = _split_graph()
+    result = applier.apply(_split_proposal(), graph)
+    assert result.success is True
+
+    parent = next(t for t in graph.tasks if t.id == "T1")
+    children = [t for t in graph.tasks if t.id in {"T1a", "T1b"}]
+    assert len(children) == 2
+    for child in children:
+        assert child.test_command == "pytest -q tests/unit"
+        assert child.test_paths == ["tests/unit"]
+        assert child.allowed_paths == ["src/app"]
+    # independent copies, not shared mutable references to the parent's lists
+    children[0].test_paths.append("extra")
+    assert parent.test_paths == ["tests/unit"]
