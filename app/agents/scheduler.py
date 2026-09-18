@@ -14,14 +14,19 @@ class TaskScheduler:
                 ready.append(task)
         return ready
 
+    def ready_wave(self, task_graph: TaskGraph) -> list[Task]:
+        """Ready tasks in deterministic dispatch order — the frontier a parallel
+        executor would fan out over. Serial execution consumes ``wave[0]``."""
+        return self._order_by_topology(self.get_ready_tasks(task_graph), task_graph)
+
     def select_next_task(self, task_graph: TaskGraph) -> Task | None:
-        ready = self.get_ready_tasks(task_graph)
-        if not ready:
-            return None
+        wave = self.ready_wave(task_graph)
+        return wave[0] if wave else None
+
+    def _order_by_topology(self, tasks: list[Task], task_graph: TaskGraph) -> list[Task]:
         order = list(task_graph.graph_validation.topological_order) if task_graph.graph_validation and task_graph.graph_validation.topological_order else [t.id for t in task_graph.tasks]
         position = {task_id: idx for idx, task_id in enumerate(order)}
-        ready.sort(key=lambda t: position.get(t.id, len(order)))
-        return ready[0]
+        return sorted(tasks, key=lambda t: position.get(t.id, len(order)))
 
     def update_states(self, task_graph: TaskGraph) -> None:
         task_map = {t.id: t for t in task_graph.tasks}

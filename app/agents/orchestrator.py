@@ -141,7 +141,10 @@ class ExecutionOrchestrator:
                     self.persistence.save_run(run)
                 return run
 
-            next_task = self.scheduler.select_next_task(task_graph)
+            # Serial dispatch takes the head of the ready wave; this is the seam
+            # a later workspace_provider fans the whole wave out over.
+            wave = self.scheduler.ready_wave(task_graph)
+            next_task = wave[0] if wave else None
             if next_task is None:
                 if not run.active_proposal_id:
                     run.status = ExecutionStatus.BLOCKED
