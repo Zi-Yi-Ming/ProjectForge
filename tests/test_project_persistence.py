@@ -347,3 +347,45 @@ def test_rapid_event_appends_are_never_dropped_or_reordered(tmp_path: Path) -> N
     assert len(events) == count
     assert len({e.event_id for e in events}) == count
     assert [e.payload["index"] for e in events] == list(range(count))
+
+
+def test_file_lock_acquires_and_releases(tmp_path: Path) -> None:
+    from app.product.event_store import _file_lock
+
+    lock = tmp_path / "x.lock"
+    with _file_lock(lock):
+        assert lock.exists()
+    # reacquirable after release (no deadlock)
+    with _file_lock(lock):
+        pass
+
+
+def test_append_survives_concurrent_processes(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+    from pathlib import Path as _P
+
+    base = tmp_path / "store"
+    cwd = str(_P.cwd())
+    # each child appends 25 events with a tiny rotation threshold so shards
+    # roll over under contention; the append lock must serialize write + rotate
+    child = (
+        "import sys, os; sys.path.insert(0, %r);"
+        "from pathlib import Path;"
+        "from datetime import datetime, timezone;"
+        "from app.product.event_store import EventStore;"
+        "from app.schemas.event import ProductEvent, Actor;"
+        "store = EventStore(base_dir=Path(%r), max_file_bytes=200);"
+        "pid = os.getpid();"
+        "[store.append(ProductEvent(event_id=f'evt-{pid}-{i}', event_type='E', project_id='p',"
+        " timestamp=datetime.now(timezone.utc).isoformat(), actor=Actor.SYSTEM, payload={'i': i}))"
+        " for i in range(25)];"
+    ) % (cwd, str(base))
+
+    procs = [subprocess.Popen([sys.executable, "-c", child]) for _ in range(4)]
+    codes = [p.wait() for p in procs]
+    assert codes == [0, 0, 0, 0], codes
+
+    events = EventStore(base_dir=base).get_events("p")
+    assert len(events) == 100
+    assert len({e.event_id for e in events}) == 100

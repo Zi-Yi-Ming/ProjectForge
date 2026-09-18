@@ -3,12 +3,52 @@ from __future__ import annotations
 import json
 import os
 import secrets
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from app.schemas.event import Actor, ProductEvent
+
+try:  # POSIX
+    import fcntl
+except ImportError:  # pragma: no cover - platform-specific
+    fcntl = None
+
+try:  # Windows
+    import msvcrt
+except ImportError:  # pragma: no cover - platform-specific
+    msvcrt = None
+
+
+@contextmanager
+def _file_lock(lock_path: Path):
+    """Advisory exclusive lock on a sidecar file, serializing appends across
+    processes (a CLI run and a long-lived API server sharing one events dir).
+
+    Falls back to a no-op when neither fcntl nor msvcrt is available, so the
+    store still works (single-process, threading.Lock-guarded) on exotic
+    platforms — just without cross-process serialization there.
+    """
+    if fcntl is None and msvcrt is None:
+        yield
+        return
+    with open(lock_path, "a+b") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        else:  # msvcrt
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def new_event_id() -> str:
@@ -35,6 +75,9 @@ class EventStore:
 
     def _events_dir(self, project_id: str) -> Path:
         return self.base_dir / project_id / "events"
+
+    def _lock_path(self, project_dir: Path) -> Path:
+        return project_dir / ".append.lock"
 
     def _shard_paths(self, project_dir: Path) -> list[Path]:
         """Rotated shards (oldest first) plus the active file when present.
@@ -78,7 +121,7 @@ class EventStore:
         payload = event.model_dump()
         payload["actor"] = event.actor.value if isinstance(event.actor, Actor) else str(event.actor)
         line = json.dumps(payload, ensure_ascii=False)
-        with self._lock:
+        with self._lock, _file_lock(self._lock_path(project_dir)):
             if event.project_id not in self._seen:
                 self._seen[event.project_id] = self._load_seen_ids(self._shard_paths(project_dir))
             if event.event_id in self._seen[event.project_id]:
