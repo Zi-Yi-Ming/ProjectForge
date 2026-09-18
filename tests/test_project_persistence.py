@@ -85,6 +85,29 @@ def test_event_query_returns_ordered_events(tmp_path: Path) -> None:
     assert events[2].payload == {"from": "ANALYZING", "to": "PLANNING"}
 
 
+def test_events_same_instant_keep_append_order_across_offset_spellings(tmp_path: Path) -> None:
+    # ProjectService emits "...Z" and RunControl emits "...+00:00". For the same
+    # instant a raw string sort puts '+' (0x2B) before 'Z' (0x5A), which would
+    # reverse the append order. The store must sort by the parsed instant, so
+    # equal instants keep append order.
+    event_store = EventStore(base_dir=tmp_path)
+    same_instant = "2026-01-01T00:00:01.000000"
+    event_store.append(
+        ProductEvent(
+            event_id="evt-a", event_type="RUN_STARTED", project_id="proj-ord",
+            timestamp=f"{same_instant}Z", actor=Actor.SYSTEM, payload={},
+        )
+    )
+    event_store.append(
+        ProductEvent(
+            event_id="evt-b", event_type="RUN_PROGRESS", project_id="proj-ord",
+            timestamp=f"{same_instant}+00:00", actor=Actor.SYSTEM, payload={},
+        )
+    )
+    ids = [e.event_id for e in event_store.get_events("proj-ord")]
+    assert ids == ["evt-a", "evt-b"]
+
+
 def test_event_immutability(tmp_path: Path) -> None:
     event_store = EventStore(base_dir=tmp_path)
     event = event_store.append(

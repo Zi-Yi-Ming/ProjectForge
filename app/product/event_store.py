@@ -91,6 +91,25 @@ class EventStore:
             self._rotate_if_needed(project_dir, active)
         return event
 
+    @staticmethod
+    def _sort_key(event: ProductEvent) -> datetime:
+        # Producers emit UTC but in two spellings: "...Z" (ProjectService) and
+        # "...+00:00" (RunControl/ReplanControl). A raw string compare puts
+        # '+00:00' before 'Z' for the SAME instant, so interleaved events get
+        # reversed. Sort by the parsed instant instead; equal instants keep
+        # append order (the stable sort), which is the log's source of truth.
+        ts = event.timestamp or ""
+        # datetime.fromisoformat only accepts a trailing "Z" from 3.11; target
+        # is 3.10+, so normalize it to an explicit offset first.
+        text = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return datetime.min.replace(tzinfo=timezone.utc)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
     def get_events(self, project_id: str) -> list[ProductEvent]:
         project_dir = self._events_dir(project_id)
         events: list[ProductEvent] = []
@@ -110,7 +129,7 @@ class EventStore:
                         events.append(ProductEvent.model_validate(data))
                     except (json.JSONDecodeError, ValueError):
                         continue
-        # Stable sort on timestamp only: ties keep append order, which is the
-        # event log's source of truth (ids are not order-significant).
-        events.sort(key=lambda e: e.timestamp)
+        # Stable sort on the parsed instant: ties keep append order, which is
+        # the event log's source of truth (ids are not order-significant).
+        events.sort(key=self._sort_key)
         return events
