@@ -90,6 +90,20 @@ def create_api(service: ProjectService | None = None, executor: str = "hermes") 
                 status_code=409,
                 content=ErrorResponse(error=ErrorDetail(code="INVALID_STATE_TRANSITION", message=f"Invalid target status: {request.target_status}")).model_dump(),
             )
+        # Reaching READY is the human plan-approval gate; it must not be a bare
+        # state transition. Clients approve via POST /approve, which enforces
+        # the plan-exists precondition. This keeps the gate an invariant at the
+        # external boundary regardless of the trusted internal primitive.
+        if target == ProjectStatus.READY:
+            return JSONResponse(
+                status_code=409,
+                content=ErrorResponse(
+                    error=ErrorDetail(
+                        code="APPROVAL_REQUIRED",
+                        message="PLANNING->READY requires human plan approval via POST /projects/{project_id}/approve.",
+                    )
+                ).model_dump(),
+            )
         try:
             project = service.transition_to(project_id, target)
         except ProjectNotFoundError as exc:
@@ -121,6 +135,29 @@ def create_api(service: ProjectService | None = None, executor: str = "hermes") 
             return JSONResponse(
                 status_code=500,
                 content=ErrorResponse(error=ErrorDetail(code="PERSISTENCE_ERROR", message=f"Failed to transition project: {exc}")).model_dump(),
+            )
+        return JSONResponse(status_code=200, content=_to_response(project).model_dump())
+
+    @api.post("/projects/{project_id}/approve", response_model=ProjectResponse)
+    def approve_plan(project_id: str) -> JSONResponse:
+        # The human plan-approval gate: only approve_plan enforces that a real
+        # plan (task graph) exists before a project becomes READY.
+        try:
+            project = service.approve_plan(project_id)
+        except ProjectNotFoundError as exc:
+            return JSONResponse(
+                status_code=404,
+                content=ErrorResponse(error=ErrorDetail(code="PROJECT_NOT_FOUND", message=str(exc))).model_dump(),
+            )
+        except InvalidProjectStateError as exc:
+            return JSONResponse(
+                status_code=400,
+                content=ErrorResponse(error=ErrorDetail(code="INVALID_PROJECT_STATE", message=str(exc))).model_dump(),
+            )
+        except Exception as exc:
+            return JSONResponse(
+                status_code=500,
+                content=ErrorResponse(error=ErrorDetail(code="PERSISTENCE_ERROR", message=f"Failed to approve plan: {exc}")).model_dump(),
             )
         return JSONResponse(status_code=200, content=_to_response(project).model_dump())
 

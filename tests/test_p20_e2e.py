@@ -265,9 +265,18 @@ def test_api_project_lifecycle_and_run_start_contract(tmp_path: Path) -> None:
     assert response.status_code == 201
     project_id = response.json()["project_id"]
 
-    for target in ["ANALYZING", "PLANNING", "READY"]:
+    for target in ["ANALYZING", "PLANNING"]:
         response = client.post(f"/projects/{project_id}/transition", json={"target_status": target})
         assert response.status_code == 200
+
+    # Reaching READY is the human approval gate: a bare transition is refused...
+    response = client.post(f"/projects/{project_id}/transition", json={"target_status": "READY"})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "APPROVAL_REQUIRED"
+    # ...and the approve endpoint refuses while no task graph has been planned.
+    response = client.post(f"/projects/{project_id}/approve")
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_PROJECT_STATE"
 
     # Starting a run via the API requires a persisted task graph; without one
     # the request is rejected as an invalid project state.
