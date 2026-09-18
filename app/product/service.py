@@ -165,6 +165,33 @@ def resolve_rollback_on_failure() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def resolve_parallel_enabled() -> bool:
+    """Whether a ready wave runs its independent tasks concurrently: env > False.
+
+    Off by default so execution stays serial; enable via
+    PROJECTFORGE_PARALLEL=1|true|yes.
+    """
+    raw = os.environ.get("PROJECTFORGE_PARALLEL", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def resolve_max_parallel_workers() -> int | None:
+    """Worker cap for a parallel wave: env > None (wave width decides).
+
+    Only relevant when parallel dispatch is enabled.
+    """
+    raw = os.environ.get("PROJECTFORGE_MAX_PARALLEL_WORKERS", "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+        if value > 0:
+            return value
+    except ValueError:
+        pass
+    return None
+
+
 class ProjectService:
     def __init__(self, persistence: ProjectPersistence | None = None, event_store: EventStore | None = None, run_control: RunControl | None = None, replan_control: Any = None, executor_factory: Any = None, base_dir: Path | None = None, task_timeout: int | None = None) -> None:
         self.base_dir = resolve_base_dir(base_dir)
@@ -201,6 +228,8 @@ class ProjectService:
             validator=DeterministicValidator(self_test_timeout=self.task_timeout),
             max_run_seconds=resolve_max_run_seconds(),
             rollback_on_failure=resolve_rollback_on_failure(),
+            parallel_enabled=resolve_parallel_enabled(),
+            max_parallel_workers=resolve_max_parallel_workers(),
         )
 
     def _auto_run_dir(self, project_id: str) -> Path:

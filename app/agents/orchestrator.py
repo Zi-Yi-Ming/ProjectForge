@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import secrets
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -25,6 +26,23 @@ from app.schemas.task import Task, TaskGraph, TaskStatus
 from app.schemas.validation import ValidationResult, ValidationStatus
 
 
+@dataclass
+class _WaveOutcome:
+    """Per-task result produced inside a parallel wave, before the dispatcher
+    merges it back and records it on the single-threaded path."""
+
+    task: Task
+    branch: str
+    worktree: Path
+    contract: TaskContract
+    execution_result: Any | None
+    validation_result: Any | None
+    status: TaskStatus
+    started_at: str
+    finished_at: str
+    error: str = ""
+
+
 class ExecutionOrchestrator:
     def __init__(
         self,
@@ -40,6 +58,8 @@ class ExecutionOrchestrator:
         artifacts_root: Path | None = None,
         max_run_seconds: float | None = None,
         rollback_on_failure: bool = False,
+        parallel_enabled: bool = False,
+        max_parallel_workers: int | None = None,
     ) -> None:
         self.adapter = adapter
         self.validator = validator or DeterministicValidator()
@@ -61,6 +81,11 @@ class ExecutionOrchestrator:
         # failed task leaves its half-finished changes in the workspace and the
         # next task builds on a dirty foundation — the historical behavior.
         self.rollback_on_failure = rollback_on_failure
+        # P3 parallel workers: opt-in. Off by default so the serial loop stays
+        # exactly as before; only a ready wave of >1 independent task is fanned
+        # out, each on its own git worktree, when enabled.
+        self.parallel_enabled = parallel_enabled
+        self.max_parallel_workers = max_parallel_workers
 
     def _artifact_store_for(self, run_dir: Path | None, run_id: str | None) -> ArtifactStore | None:
         """Pick where audit artifacts live.
@@ -153,6 +178,13 @@ class ExecutionOrchestrator:
                 if self.persistence is not None:
                     self.persistence.save_run(run)
                 return run
+
+            if self.parallel_enabled and len(wave) > 1:
+                handled = self._run_wave_parallel(
+                    run, wave, task_graph, project_map, run_dir, artifact_store
+                )
+                if handled:
+                    continue
 
             contract = self._build_contract(next_task, project_map, run_dir=run_dir)
             run.current_task_id = next_task.id
@@ -290,6 +322,163 @@ class ExecutionOrchestrator:
                 self._maybe_generate_replan(run, next_task, task_graph, contract, execution_result, validation_result)
 
         return run
+
+    def _run_wave_parallel(
+        self,
+        run: ExecutionRun,
+        wave: list[Task],
+        task_graph: TaskGraph,
+        project_map: ProjectMap,
+        run_dir: Path | None,
+        artifact_store: ArtifactStore | None,
+    ) -> bool:
+        """Fan a ready wave of independent tasks out over git worktrees.
+
+        Workers only ever touch their own worktree (execute + validate), so the
+        isolation is real. Every shared mutation — merge, records, artifacts,
+        persistence, replan — runs single-threaded after the barrier. Returns
+        False (the caller then runs the untouched serial body for wave[0]) when
+        the run cannot be branched, e.g. no usable git history yet.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        from app.agents.worktree import WorktreeError, WorktreeManager
+        from app.agents.workspace_provider import WorktreeWorkspaceProvider
+
+        if run_dir is None:
+            return False
+        original_provider = getattr(self.adapter, "workspace_provider", None)
+        if original_provider is None:
+            return False  # adapter has no provider seam -> cannot isolate branches
+
+        mgr = WorktreeManager(run_dir)
+        base_head = mgr.head()
+        if not base_head:
+            return False  # nothing to branch from yet -> stay serial
+
+        provider = WorktreeWorkspaceProvider(run_dir)
+        worktrees_root = run_dir.parent / ".pf-worktrees" / run.run_id
+        plans: list[tuple[Task, str, Path]] = []
+
+        self.adapter.workspace_provider = provider
+        try:
+            try:
+                for task in wave:
+                    branch = f"pf/{run.run_id}/{task.id}"
+                    worktree = worktrees_root / task.id
+                    worktree.parent.mkdir(parents=True, exist_ok=True)
+                    mgr.create(branch, worktree, base=base_head)
+                    provider.bind(task.id, worktree)
+                    task.status = TaskStatus.IN_PROGRESS
+                    plans.append((task, branch, worktree))
+            except WorktreeError:
+                for task, branch, worktree in plans:
+                    mgr.remove(worktree, branch)
+                    provider.unbind(task.id)
+                    task.status = TaskStatus.PENDING
+                return False
+
+            def work(entry: tuple[Task, str, Path]) -> _WaveOutcome:
+                task, branch, worktree = entry
+                contract = self._build_contract(task, project_map, run_dir=worktree)
+                started_at = self._now()
+                try:
+                    execution_result = self.adapter.execute(contract, project_map)
+                except Exception as exc:
+                    return _WaveOutcome(task, branch, worktree, contract, None, None,
+                                        TaskStatus.FAILED, started_at, self._now(), str(exc))
+                if execution_result.status != "IMPLEMENTED":
+                    failed = execution_result.status in {"FAILED", "ERROR", "TIMEOUT"}
+                    return _WaveOutcome(
+                        task, branch, worktree, contract, execution_result, None,
+                        TaskStatus.FAILED if failed else TaskStatus.BLOCKED, started_at, self._now(), "",
+                    )
+                deterministic = self.validator.validate(task.id, contract, execution_result, workspace=worktree)
+                validation_result, _feedback = self.aggregation.aggregate(contract, execution_result, deterministic)
+                if validation_result.status == ValidationStatus.PASS:
+                    status = TaskStatus.DONE
+                elif validation_result.status == ValidationStatus.FAIL:
+                    status = TaskStatus.FAILED
+                else:
+                    status = TaskStatus.BLOCKED
+                return _WaveOutcome(
+                    task, branch, worktree, contract, execution_result, validation_result,
+                    status, started_at, self._now(), "",
+                )
+
+            workers = max(1, min(self.max_parallel_workers or len(plans), len(plans)))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                outcomes = list(pool.map(work, plans))
+        finally:
+            self.adapter.workspace_provider = original_provider
+
+        for outcome in outcomes:
+            task = outcome.task
+            status = outcome.status
+
+            if status == TaskStatus.DONE:
+                merge = mgr.merge(outcome.branch)
+                if not merge.ok:
+                    status = TaskStatus.FAILED
+                    if artifact_store is not None:
+                        artifact_store.save(
+                            Artifact(
+                                artifact_id=self._unique_artifact_id(task.id, "conflict"),
+                                task_id=task.id,
+                                artifact_type=ArtifactType.ERROR_LOG,
+                                created_at=self._now(),
+                                metadata=["MERGE_CONFLICT", *merge.conflicted_files],
+                            ),
+                            json.dumps({"conflicted_files": merge.conflicted_files}, ensure_ascii=False, indent=2),
+                        )
+
+            task.status = status
+            mgr.remove(outcome.worktree, outcome.branch)
+            provider.unbind(task.id)
+
+            record = TaskExecutionRecord(
+                task_id=task.id,
+                phase=task.phase_id,
+                title=task.title,
+                status=status.value,
+                contract=outcome.contract,
+                execution_result=outcome.execution_result,
+                validation_result=outcome.validation_result,
+                started_at=outcome.started_at,
+                finished_at=outcome.finished_at,
+            )
+            run.task_results.append(record)
+            if self.persistence is not None:
+                self.persistence.save_task_record(run.run_id, record)
+
+            if artifact_store is not None and outcome.execution_result is not None and status != TaskStatus.DONE:
+                artifact_store.save(
+                    Artifact(
+                        artifact_id=self._unique_artifact_id(task.id, "output"),
+                        task_id=task.id,
+                        artifact_type=ArtifactType.AGENT_OUTPUT,
+                        created_at=self._now(),
+                        metadata=[outcome.execution_result.status],
+                    ),
+                    json.dumps(outcome.execution_result.model_dump(), ensure_ascii=False, indent=2),
+                )
+            if artifact_store is not None and outcome.validation_result is not None:
+                artifact_store.save(
+                    Artifact(
+                        artifact_id=self._unique_artifact_id(task.id, "validation"),
+                        task_id=task.id,
+                        artifact_type=ArtifactType.VALIDATION_RESULT,
+                        created_at=self._now(),
+                        metadata=[outcome.validation_result.status.value],
+                    ),
+                    json.dumps(outcome.validation_result.model_dump(), ensure_ascii=False, indent=2),
+                )
+
+            if status == TaskStatus.FAILED and self._replan_enabled():
+                self._maybe_generate_replan(run, task, task_graph, outcome.contract, outcome.execution_result, outcome.validation_result)
+
+        run.current_task_id = ""
+        return True
 
     def resume(self, run_id: str, task_graph: TaskGraph, project_map: ProjectMap, run_dir: Path) -> ExecutionRun:
         if self.persistence is None:
