@@ -77,14 +77,22 @@ class ValidatorSandboxPolicy:
     """bubblewrap isolation for the deterministic validator's test execution.
 
     The validator runs test code the agent (possibly an LLM) authored — the last
-    untrusted-code boundary before a task is trusted. Unlike the agent, it must
-    reach the project's Python interpreter and ``site-packages``, so the host is
-    mounted read-only and only the task workspace stays writable; ``/tmp`` gets a
-    tmpfs so test scratch space keeps working. The workspace stays at its real
-    path (no ``/workspace`` relocation) so ``sys.executable`` and ``cwd`` resolve
-    unchanged. It deliberately mounts no credential/config dir — running tests
-    needs none. Filesystem/pid/ipc are isolated; the host network is shared, the
-    same documented limitation as the agent sandbox.
+    untrusted-code boundary before a task is trusted. The workspace is the only
+    writable location (越界写被挡) and ``/tmp`` is a tmpfs; the workspace stays at
+    its real path so ``sys.executable`` and ``cwd`` resolve unchanged. pid/ipc are
+    isolated; the host network is shared (same limitation as the agent sandbox).
+
+    Security posture — read side is NOT yet restricted: the whole host is
+    mounted read-only (``--ro-bind / /``), so sandboxed tests can still *read*
+    arbitrary host files, including secrets under home dotdirs. This is a
+    deliberate compatibility choice, not a claim of "no credential access": the
+    test process needs the running interpreter's full stdlib / site-packages /
+    native-extension closure, whose location is deployment-variable, so binding
+    the whole root read-only is the only choice that reliably runs *any* project's
+    tests. Narrowing to an explicit closure (interpreter + system dirs, and/or
+    tmpfs-overlays hiding ``~/.ssh``-style dotdirs) is a known follow-up that must
+    be validated against real runs on the VM — too tight a bind silently breaks
+    legitimate tests.
     """
 
     def is_available(self) -> bool:
