@@ -412,11 +412,14 @@ class ExecutionOrchestrator:
         finally:
             self.adapter.workspace_provider = original_provider
 
+        # Phase 1: merge every branch that validated in isolation back into the
+        # shared workspace. A conflict is a real failure even though the task
+        # passed alone. Worktrees are reclaimed here; run_dir now holds the
+        # integrated tree. Records are finalized later so re-validation can see
+        # every sibling's merge.
         for outcome in outcomes:
             task = outcome.task
-            status = outcome.status
-
-            if status == TaskStatus.DONE:
+            if outcome.status == TaskStatus.DONE:
                 merge = mgr.merge(outcome.branch)
                 if merge.ok:
                     if (
@@ -435,7 +438,7 @@ class ExecutionOrchestrator:
                             json.dumps(outcome.execution_result.git_checkpoint.model_dump(), ensure_ascii=False, indent=2),
                         )
                 else:
-                    status = TaskStatus.FAILED
+                    outcome.status = TaskStatus.FAILED
                     outcome.validation_result = self._merge_conflict_result(
                         outcome.validation_result, task.id, merge.conflicted_files
                     )
@@ -450,10 +453,44 @@ class ExecutionOrchestrator:
                             ),
                             json.dumps({"conflicted_files": merge.conflicted_files}, ensure_ascii=False, indent=2),
                         )
-
-            task.status = status
             mgr.remove(outcome.worktree, outcome.branch)
             provider.unbind(task.id)
+
+        # Phase 2: re-validate merged tasks against the *integrated* workspace.
+        # Each branch only proved its own tests against base_head in isolation;
+        # a sibling's change — or the combination — can still break them. This
+        # is what serial gets implicitly (later validations run on cumulative
+        # state) and the parallel path must do explicitly after the merge.
+        for outcome in outcomes:
+            if outcome.status != TaskStatus.DONE or outcome.execution_result is None:
+                continue
+            integrated_contract = self._build_contract(outcome.task, project_map, run_dir=run_dir)
+            integrated = self.validator.validate(
+                outcome.task.id, integrated_contract, outcome.execution_result, workspace=run_dir
+            )
+            if integrated.status == ValidationStatus.FAIL:
+                outcome.status = TaskStatus.FAILED
+                outcome.validation_result = self._post_merge_integration_result(
+                    outcome.validation_result, outcome.task.id, integrated
+                )
+                if artifact_store is not None:
+                    artifact_store.save(
+                        Artifact(
+                            artifact_id=self._unique_artifact_id(outcome.task.id, "integration"),
+                            task_id=outcome.task.id,
+                            artifact_type=ArtifactType.ERROR_LOG,
+                            created_at=self._now(),
+                            metadata=["POST_MERGE_INTEGRATION_FAIL"],
+                        ),
+                        json.dumps(integrated.model_dump(), ensure_ascii=False, indent=2),
+                    )
+
+        # Phase 3: finalize each outcome (status, record, persistence,
+        # artifacts, replan) once its integration verdict is settled.
+        for outcome in outcomes:
+            task = outcome.task
+            status = outcome.status
+            task.status = status
 
             record = TaskExecutionRecord(
                 task_id=task.id,
@@ -528,6 +565,42 @@ class ExecutionOrchestrator:
             )
         )
         result.changed_files = list(dict.fromkeys([*result.changed_files, *files]))
+        result.evidence.append(evidence)
+        result.failures.append(evidence)
+        return result
+
+    def _post_merge_integration_result(
+        self, base: ValidationResult | None, task_id: str, integrated: ValidationResult
+    ) -> ValidationResult:
+        """Stamp a wave task's validation as FAIL for a post-merge break.
+
+        The task validated cleanly in its own worktree, but re-running its
+        checks against the integrated workspace (after every sibling branch
+        merged back) failed. Keep the isolation-passed criteria and append the
+        integration failure so the record and replan analyzer see the real
+        reason. The passed-in ``base`` is deep-copied, never mutated.
+        """
+        if base is not None:
+            result = base.model_copy(deep=True)
+        else:
+            result = ValidationResult(task_id=task_id, status=ValidationStatus.FAIL)
+        result.task_id = result.task_id or task_id
+        result.status = ValidationStatus.FAIL
+        detail = "; ".join(integrated.failures[:3]) if integrated.failures else "validation failed after merge"
+        evidence = (
+            "passed in isolation but failed validation against the integrated workspace: "
+            + detail
+        )
+        result.criterion_results.append(
+            CriterionResult(
+                criterion="Merged task still passes validation against the integrated workspace",
+                type=CriterionType.TEST,
+                status=CriterionStatus.FAIL,
+                evidence=evidence,
+                details="Validated cleanly in its own worktree; failure surfaced only after merging into the shared workspace.",
+            )
+        )
+        result.changed_files = list(dict.fromkeys([*result.changed_files, *(integrated.changed_files or [])]))
         result.evidence.append(evidence)
         result.failures.append(evidence)
         return result

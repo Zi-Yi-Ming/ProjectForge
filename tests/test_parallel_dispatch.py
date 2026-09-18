@@ -11,7 +11,7 @@ from app.agents.orchestrator import ExecutionOrchestrator
 from app.schemas.execution import ExecutionRun, ExecutionStatus
 from app.schemas.implementation import AgentExecutionResult, GitCheckpoint, ProjectMap, TaskContract
 from app.schemas.task import Task, TaskGraph, TaskStatus
-from app.schemas.validation import CriterionStatus, CriterionType, ValidationStatus
+from app.schemas.validation import CriterionResult, CriterionStatus, CriterionType, ValidationResult, ValidationStatus
 
 
 def _task(tid: str, deps: list[str]) -> Task:
@@ -187,3 +187,83 @@ def test_wave_parallel_declines_when_adapter_has_no_provider(tmp_path: Path) -> 
     run = ExecutionRun(run_id="r1", project="demo", status=ExecutionStatus.RUNNING, total_tasks=2, started_at="")
     graph = _graph_two_independent()
     assert orch._run_wave_parallel(run, graph.tasks, graph, ProjectMap(), run_dir, None) is False
+
+
+class _PassthroughAggregation:
+    def aggregate(self, contract, execution_result, deterministic):
+        return deterministic, None
+
+
+class _IntegrationFailingValidator:
+    """PASS for an isolated worktree; FAIL when asked to validate the integrated
+    run_dir — simulating a sibling's merge breaking the combined tree."""
+
+    def __init__(self, run_dir: Path) -> None:
+        self._run_dir = Path(run_dir).resolve()
+
+    def validate(self, task_id, contract, execution_result, workspace=None):
+        ws = Path(workspace).resolve() if workspace else None
+        if ws is not None and ws == self._run_dir:
+            return ValidationResult(
+                task_id=task_id, status=ValidationStatus.FAIL,
+                failures=["integrated test suite failed after merge"],
+                changed_files=[f"integration_{task_id}.py"],
+            )
+        return ValidationResult(task_id=task_id, status=ValidationStatus.PASS)
+
+
+def test_post_merge_revalidation_fails_merged_tasks(tmp_path: Path) -> None:
+    run_dir = tmp_path / "ws"
+    run_dir.mkdir(parents=True)
+    store = ArtifactStore(tmp_path / "art")
+    orch = ExecutionOrchestrator(
+        adapter=_BranchCommittingExecutor(workspace=run_dir),
+        validator=_IntegrationFailingValidator(run_dir),
+        aggregation=_PassthroughAggregation(),
+        artifact_store=store,
+        parallel_enabled=True,
+    )
+    run = orch.run(_graph_two_independent(), ProjectMap(), run_dir=run_dir)
+
+    # each task passed in isolation, but the integrated re-validation failed
+    assert run.task_results
+    for rec in run.task_results:
+        assert rec.status == TaskStatus.FAILED.value
+        integration_criteria = [
+            c
+            for c in (rec.validation_result.criterion_results or [])
+            if c.type == CriterionType.TEST
+            and c.status == CriterionStatus.FAIL
+            and "integrated" in c.evidence
+        ]
+        assert integration_criteria, "merged task must carry a post-merge integration criterion"
+    assert list(store.artifacts_dir.glob("*_integration_*")), "a POST_MERGE_INTEGRATION_FAIL artifact is written"
+
+
+def test_post_merge_integration_result_from_scratch() -> None:
+    orch = ExecutionOrchestrator(adapter=_NoProviderExecutor(), parallel_enabled=True)
+    integrated = ValidationResult(
+        task_id="T9", status=ValidationStatus.FAIL, failures=["boom"], changed_files=["x.py"]
+    )
+    result = orch._post_merge_integration_result(None, "T9", integrated)
+    assert result.status == ValidationStatus.FAIL
+    assert result.task_id == "T9"
+    assert any(
+        c.type == CriterionType.TEST and c.status == CriterionStatus.FAIL and "integrated" in c.evidence
+        for c in result.criterion_results
+    )
+    assert "x.py" in result.changed_files
+
+
+def test_post_merge_integration_result_preserves_base_without_mutating() -> None:
+    base = ValidationResult(
+        task_id="T2", status=ValidationStatus.PASS,
+        criterion_results=[CriterionResult(criterion="tests", type=CriterionType.TEST, status=CriterionStatus.PASS)],
+    )
+    orch = ExecutionOrchestrator(adapter=_NoProviderExecutor(), parallel_enabled=True)
+    integrated = ValidationResult(task_id="T2", status=ValidationStatus.FAIL, failures=["nope"])
+    result = orch._post_merge_integration_result(base, "T2", integrated)
+    assert result.status == ValidationStatus.FAIL
+    assert len(result.criterion_results) == 2  # isolation-passed TEST kept + integration FAIL appended
+    assert base.status == ValidationStatus.PASS  # deep copy: base untouched
+    assert len(base.criterion_results) == 1
