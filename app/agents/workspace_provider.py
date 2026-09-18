@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -28,3 +29,30 @@ class FixedWorkspaceProvider:
 
     def workspace_for(self, task: TaskContract) -> Path | None:
         return self._workspace
+
+
+class WorktreeWorkspaceProvider:
+    """Routes each bound task to its own worktree, unbound tasks to ``run_dir``.
+
+    The lock guards cross-thread access: parallel dispatch (step 3b) binds a
+    task to its worktree from the dispatcher thread while the adapter reads the
+    mapping from a worker thread. The ``run_dir`` fallback lets one provider
+    serve a mixed serial + parallel segment.
+    """
+
+    def __init__(self, run_dir: Path | None) -> None:
+        self._run_dir = run_dir
+        self._lock = threading.Lock()
+        self._bindings: dict[str, Path] = {}
+
+    def bind(self, task_id: str, path: Path) -> None:
+        with self._lock:
+            self._bindings[task_id] = Path(path)
+
+    def unbind(self, task_id: str) -> None:
+        with self._lock:
+            self._bindings.pop(task_id, None)
+
+    def workspace_for(self, task: TaskContract) -> Path | None:
+        with self._lock:
+            return self._bindings.get(task.task_id, self._run_dir)
