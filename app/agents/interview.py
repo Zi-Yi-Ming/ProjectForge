@@ -9,6 +9,7 @@ from app.schemas.blueprint import ProjectBlueprint, UserProfile
 from app.schemas.execution import TaskExecutionRecord
 from app.schemas.jd import JDProfile
 from app.schemas.task import TaskGraph
+from app.schemas.validation import CriterionStatus, CriterionType
 
 PITCH_PROMPT = """你是面试教练。基于给定的项目规划 JSON，产出 JSON：
 {"quick_pitch": "30 秒项目介绍（口语化，第一人称）", "architecture_story": "3 分钟架构讲法（分层叙述，串起技术栈与数据流）"}
@@ -100,6 +101,20 @@ class InterviewDocBuilder:
             if user_profile.target_role:
                 lines.append(f"- 目标方向：{user_profile.target_role}")
         lines.append("")
+        if jd_profile and (jd_profile.role or jd_profile.required_skills or jd_profile.engineering_topics):
+            lines.append("## 岗位画像与能力覆盖")
+            lines.append("")
+            if jd_profile.role:
+                lines.append(f"- 目标岗位：{jd_profile.role}（{jd_profile.seniority}）")
+            if jd_profile.required_skills:
+                lines.append(f"- JD 必备能力：{'、'.join(jd_profile.required_skills)}")
+            if jd_profile.preferred_skills:
+                lines.append(f"- JD 加分能力：{'、'.join(jd_profile.preferred_skills)}")
+            if jd_profile.engineering_topics:
+                lines.append(f"- 工程主题：{'、'.join(jd_profile.engineering_topics)}")
+            for skill, how in blueprint.jd_skill_mapping.items():
+                lines.append(f"- {skill} → {how}")
+            lines.append("")
         lines.append("## 3 分钟架构讲法")
         lines.append("")
         if pitches:
@@ -118,6 +133,8 @@ class InterviewDocBuilder:
         lines.append("")
         lines.append("## 逐任务深挖")
         lines.append("")
+        records_by_id = {r.task_id: r for r in (records or [])}
+        verifiable = {CriterionType.TEST, CriterionType.FILE, CriterionType.PATTERN, CriterionType.COMMAND}
         for task in task_graph.tasks:
             lines.append(f"### {task.id} {task.title} [{task.scope}]")
             lines.append(f"- 目标：{task.goal}")
@@ -127,8 +144,19 @@ class InterviewDocBuilder:
                 lines.append(f"- 技术点：{p}")
             for ip in task.interview_points:
                 lines.append(f"- 面试表达：{ip}")
-            for q in blueprint.likely_questions:
-                lines.append(f"- 可能被问：{q}")
+            rec = records_by_id.get(task.id)
+            criteria = rec.validation_result.criterion_results if (rec is not None and rec.validation_result) else []
+            for c in criteria:
+                if c.type in verifiable and c.status in {CriterionStatus.PASS, CriterionStatus.FAIL}:
+                    mark = "✅" if c.status == CriterionStatus.PASS else "❌"
+                    ev = (c.evidence or "").strip().splitlines()[0] if (c.evidence or "").strip() else ""
+                    lines.append(f"- 核验：{mark} {c.criterion}（{c.type.value}）{('：' + ev[:100]) if ev else ''}")
+            lines.append("")
+        if blueprint.likely_questions:
+            lines.append("## 高频追问")
+            lines.append("")
+            for q in dict.fromkeys(blueprint.likely_questions):
+                lines.append(f"- {q}")
             lines.append("")
         done = [r for r in (records or []) if r.status == "DONE"]
         if done:

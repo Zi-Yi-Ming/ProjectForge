@@ -38,7 +38,7 @@ def test_template_doc_includes_task_details() -> None:
         assert c in doc
     for ip in first.interview_points:
         assert ip in doc
-    # 每个任务卡片末尾渲染 blueprint.likely_questions（RuleBasedPlanner 产出非空）
+    # likely_questions 现集中在「高频追问」一节（RuleBasedPlanner 产出非空）
     assert r.blueprint.likely_questions
     assert any(q in doc for q in r.blueprint.likely_questions)
 
@@ -80,6 +80,53 @@ def test_user_profile_fields_rendered() -> None:
         user_profile=UserProfile(basic_skills=["Java"], weekly_hours=8),
     )
     assert "每周 8 小时" in doc
+
+
+def test_jd_profile_capability_section_rendered() -> None:
+    r = _planning_result()
+    doc = InterviewDocBuilder().build(r.jd_profile, r.blueprint, r.task_graph, records=None)
+    assert "## 岗位画像与能力覆盖" in doc
+    assert "JD 必备能力" in doc
+    # role / skills from the analyzer actually flow through
+    assert "Java" in doc
+
+
+def test_high_freq_questions_section_rendered_once() -> None:
+    r = _planning_result()
+    doc = InterviewDocBuilder().build(r.jd_profile, r.blueprint, r.task_graph, records=None)
+    assert "## 高频追问" in doc
+
+
+def test_criterion_verdicts_rendered_in_task_card() -> None:
+    from app.schemas.execution import TaskExecutionRecord
+    from app.schemas.implementation import (
+        AgentExecutionResult, ExecutionStatus as ImplExec, GitCheckpoint, ScopeStatus,
+    )
+    from app.schemas.validation import (
+        CriterionResult, CriterionStatus, CriterionType, ValidationResult, ValidationStatus,
+    )
+
+    r = _planning_result()
+    first = r.task_graph.tasks[0]
+    record = TaskExecutionRecord(
+        task_id=first.id, phase=first.phase_id, title=first.title, status="DONE",
+        execution_result=AgentExecutionResult(
+            task_id=first.id, agent="mock", status=ImplExec.IMPLEMENTED, iterations=1,
+            changed_files=["a.py"], scope_status=ScopeStatus.WITHIN_SCOPE,
+            git_checkpoint=GitCheckpoint(head_before="a" * 40, head_after="b" * 40, changed_files=["a.py"]),
+        ),
+        validation_result=ValidationResult(
+            task_id=first.id, status=ValidationStatus.PASS,
+            criterion_results=[
+                CriterionResult(criterion="服务可启动", type=CriterionType.TEST, status=CriterionStatus.PASS, evidence="pytest exit=0"),
+                CriterionResult(criterion="README 存在", type=CriterionType.FILE, status=CriterionStatus.FAIL, evidence="exists=False"),
+            ],
+        ),
+    )
+    doc = InterviewDocBuilder().build(r.jd_profile, r.blueprint, r.task_graph, records=[record])
+    assert "核验：✅ 服务可启动" in doc
+    assert "核验：❌ README 存在" in doc
+    assert "pytest exit=0" in doc
 
 
 def _llm_builder(content: str) -> InterviewDocBuilder:
