@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jdforge"
-version = "0.5.2"
-description = "JD-driven project coach and constrained execution engine"
+version = "0.6.0"
+description = "Contract-first task engine: machine-checkable acceptance criteria, sandboxed execution, independent validation, and approval-gated replan."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "ProjectForge Contributors" }]
-keywords = ["jd", "learning", "coding-agent", "orchestrator", "sandbox", "validation", "replan"]
+keywords = ["acceptance-criteria", "verification", "sandbox", "coding-agent", "orchestrator", "validation", "replan", "contracts", "llm"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
