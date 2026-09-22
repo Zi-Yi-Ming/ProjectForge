@@ -4,8 +4,13 @@ All notable changes to this project are documented in this file.
 Format: Keep a Changelog; versioning: SemVer（0.x 阶段 minor = 能力/破坏性变更，patch = 修复）。
 
 ## [Unreleased]
-Master since 0.5.2, pending the next release. All changes are gated to keep the
-default path's behavior; each was landed with zero regression on the full suite.
+
+（暂无。下个版本的变更会先累积在这里。）
+
+## [0.6.0] - 2026-09-22
+
+0.5.2 之后的全部变更。所有改动都保持默认路径行为不变，
+均以完整测试套件零回归落地。
 
 ### Added
 - **并行执行（opt-in `PROJECTFORGE_PARALLEL`）**：scheduler 暴露有序 `ready_wave`；`workspace_provider` 抽象；就绪波内独立任务在各自 git worktree 并发执行、合并回共享工作区；合并成功补发 `GIT_CHECKPOINT` 产物、合并冲突→FAILED + `ERROR_LOG`；对集成后工作区**重跑验证**（`_post_merge_integration_result`）；三段流程包 `try/finally` 兜底回收 worktree/分支、merge 异常归一为任务 FAILED。
@@ -24,6 +29,10 @@ default path's behavior; each was landed with zero regression on the full suite.
 
 ### Removed
 - 退役 `project_fit` / 研究-参考库层：两个 planner 现返回 `project_fit=None`（默认路径不再产出"匹配度"打分）；蓝图移除"参考项目覆盖率 / 最终匹配得分"等据不存在的文案，`source_mode` 由 `reference` 改 `generated`。`ProjectMatcher`/`ProjectFit`/`build_match` 代码保留（若将来复活研究层可再用）。
+
+### Documentation
+- README 重定位：从「基于岗位 JD 的工程项目教练」改为「契约优先的任务执行引擎」——JD 降级为参考输入适配器，契约 / 受控执行 / 独立验证提为核心叙事；安装、快速开始、配置表、项目状态逐字保留
+- GitHub About 描述与 topics、PyPI summary/keywords 同步为新定位：移除 `career-development` / `job-description` / `project-management`，新增 `acceptance-criteria` / `verification` / `sandbox` / `coding-agent` / `contracts`
 
 ## [0.5.1] - 2026-09-15
 ### Added
