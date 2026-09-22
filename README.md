@@ -5,58 +5,62 @@
 [![CI](https://github.com/Zi-Yi-Ming/ProjectForge/actions/workflows/ci.yml/badge.svg)](https://github.com/Zi-Yi-Ming/ProjectForge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/Zi-Yi-Ming/ProjectForge/blob/master/LICENSE)
 
-> 基于岗位 JD 的工程项目教练与约束式执行引擎
+> **契约优先的任务执行引擎：每条任务绑定可机器核验的验收标准，在沙箱与路径约束内执行，由独立验证者判定"完成"。**
 
-ProjectForge 将一份岗位 JD 转化为结构化、可验证的工程项目路径：分析能力画像、生成项目蓝图与任务依赖图，并在约束下推进执行与重新规划。它的目标不是生成“能跑就行”的代码，而是帮你从岗位要求出发，得到一条可以向面试官展示的、经过计划与验证的真实项目路径。
+LLM 很擅长写代码，但依然不擅长**证明自己写完了**。ProjectForge 把 "done" 从一句自报变成一份证据：每条任务的验收标准都绑定可机器执行的检查（`TEST` / `COMMAND` / `FILE` / `PATTERN`），执行被限制在 bubblewrap 沙箱与声明的 `allowed_paths` 内，验证器独立于执行器重新核验——全部通过，任务才允许标记完成。失败时生成重新规划提案，经人工批准后应用；蓝图永远不会悄悄改掉自己。
 
-## 它能解决什么问题
+岗位 JD 是目前内置的**参考输入适配器**；契约 / 执行 / 验证这一层对输入来源无感知。
 
-- 看到 JD 后不知道应该做一个什么样的项目才能精准命中岗位要求
-- 自己从零设计项目容易 scope 失控，要么太简单无法体现深度，要么过于宏大无法完成
-- 即使有了项目 idea，也不知道如何拆解成可执行、可验证的学习任务
-- 让 AI 直接写代码容易失控：代码可能跑偏、超出 scope、或缺少工程约束
-- 无法判断生成的代码是否真的满足 JD 要求，也缺少独立验证机制
+## 它解决什么问题
 
-## 与通用 AI 编程助手的差异
+- **AI 提交 ≠ 满足要求**：验收若全靠人肉 review，"完成"就没有门槛
+- **scope 悄悄漂移**：没有边界声明，就没有越界判定
+- **"完成"凭当事方自报**：没有独立验证者，done 只是一句话
+- **失败无归因**：要么盲目重试，要么蓝图被自动改坏
+- **需求无从落到任务**：把需求文档翻译成有计划、有验证的任务路径，目前依赖人肉
 
-- 起点是真实 JD，不是凭空想需求
-- 项目设计来自能力匹配与工程约束，不是拍脑袋
-- 任务拆解、执行、验证、重新规划全部受工程控制面约束
-- 用户可以审查、确认、调整，不是黑箱
+## 与其他 AI 编程工具的差异
 
-## 核心流程
+- 完成需要**证据**：验收标准是可执行的检查，不是自然语言描述
+- 执行有**边界**：沙箱 + `allowed_paths`，`enforce` 模式下越界即失败
+- 验证**独立于执行**：执行者不能给自己的完成盖章
+- 重新规划**需人工批准**：蓝图与已完成任务不被自动修改
+- 依赖缺失时 **fail-closed**：缺 sandbox 依赖拒绝启动，而不是降级放行
+
+## 核心循环
 
 ```text
-岗位 JD
+需求文档（JD 是当前参考适配器）
   ↓
-JD 能力画像
+能力画像（规划层）
   ↓
-项目蓝图
+项目蓝图 → 任务依赖图（每条任务带契约）
   ↓
-任务依赖图
+约束式执行（bwrap 沙箱 + allowed_paths）
   ↓
-约束式执行
+独立验证（测试 / scope / 逐条验收核验）
   ↓
-验证 / 重新规划
+DONE ｜ 重新规划（人工批准）→ resume
 ```
 
 ## 核心概念
 
-### JD 能力画像（JD Profile）
+### 契约与机器可验收标准（Acceptance Criteria）
 
-从岗位描述中提取结构化能力要求，包括技术栈、工程经验、软技能等，作为后续规划与能力覆盖的输入。
+每条任务的验收标准可绑定可机器核验的检查（`criterion_checks`）：
 
-### 能力覆盖与验收核验
+| 检查类型 | 核验内容 |
+|---|---|
+| `TEST` | 执行任务声明的测试（`test_paths` / `test_command`），以退出码为准 |
+| `COMMAND` | 执行任意命令，以退出码为准 |
+| `FILE` | 文件存在性 / 内容模式 |
+| `PATTERN` | 工作区内容匹配 |
 
-JD 的能力画像（必备/加分技能、工程主题）被逐项映射到任务蓝图与任务图，形成"能力 → 任务"的覆盖关系。每条验收标准还可绑定一个可机器核验的检查（`TEST`/`COMMAND`/`FILE`/`PATTERN`），其通过/失败结论会出现在面试准备文档里，作为"该能力确实被做出并验证"的证据。（历史上的"项目匹配度"打分随研究/参考库层一同退役，现不再产出。）
+核验结论默认 `observe`（记录但不改终判）；`PROJECTFORGE_CRITERIA_MODE=require` 时，任何一条核验失败即阻断 DONE——声明的套件通过时任务才可达 DONE，否则保持保守 BLOCKED。
 
-### 项目蓝图（Project Blueprint）
+### 能力覆盖（规划层）
 
-定义项目的工程架构、核心模块、技术选型、交付边界和面试表达点，是任务拆解的上游依据。
-
-### 任务依赖图（Task Graph）
-
-将蓝图拆成有依赖关系、可执行、可验证的任务序列，明确每个任务的输入、输出、验收标准和工程边界。
+需求文档的能力画像（必备/加分技能、工程主题）被逐项映射到任务蓝图与任务图，形成"能力 → 任务"的覆盖关系；每条验收标准的核验结论会出现在产出文档里，作为"该能力确实被做出并验证"的证据。（历史上的"项目匹配度"打分随研究/参考库层一同退役，现不再产出。）
 
 ### 约束式执行（Constrained Execution）
 
@@ -68,6 +72,7 @@ JD 的能力画像（必备/加分技能、工程主题）被逐项映射到任�
 ### 验证（Validation）
 
 独立验证任务产出，包括测试执行、scope 检查、验收标准核对，只有验证通过才能标记任务完成。
+验证器在真实执行路径下同样运行于 bwrap 沙箱内，把工作区设为唯一可写、其余宿主只读挂载。
 
 ### 重新规划（Replan）
 
@@ -112,10 +117,10 @@ pip install -e .
 
 ## 快速开始
 
-### 1. 从 JD 到 READY（规划 + 审批）
+### 1. 从需求文档到 READY（规划 + 审批）
 
 ```bash
-# 规划：JD -> PLANNING（生成蓝图与任务图，等待人工审批）
+# 规划：需求文档 -> PLANNING（生成蓝图与任务图，等待人工审批）
 projectforge plan new ./jd.txt --planner rule --base-dir .runtime
 
 # 审批计划：PLANNING -> READY（审批后才能执行）
@@ -167,7 +172,7 @@ REST API 同样可用（`app.api.app:create_api`），运行与重新规划可�
 
 缺少任一依赖时执行会 fail-closed 拒绝启动；测试套件会自动跳过真实执行用例。
 
-## 示例
+## 示例：JD 作为参考输入
 
 ### 输入 JD
 
@@ -210,37 +215,37 @@ Java 后端开发实习生
 - T04 Redis 缓存
 - T05 单元测试
 
-> 以上为概念示例。实际输出取决于 JD 输入、planner 后端（rule 或 llm）与用户选择的 Scope。
+> 以上为概念示例。实际输出取决于需求文档输入、planner 后端（rule 或 llm）与用户选择的 Scope。
 
 ## 架构
 
 ```text
-                    Job Description
-                           │
-                           ▼
-                     ┌───────────┐
-                     │ JDAnalyzer │
-                     └─────┬─────┘
-                           │
-                           ▼
-                   ┌─────────────────┐
-                   │ Project Blueprint│
-                   └────────┬────────┘
+              需求文档（JD 为当前参考适配器）
                             │
                             ▼
                       ┌───────────┐
-                      │ TaskEngine │
+                      │ JDAnalyzer │
                       └─────┬─────┘
                             │
                             ▼
-                       Task Graph
-                            │
-                            ▼
-                    Constrained Run
-                            │
-                  ┌─────────┴─────────┐
-                  ▼                   ▼
-             Validation            Replan
+                    ┌─────────────────┐
+                    │ Project Blueprint│
+                    └────────┬────────┘
+                             │
+                             ▼
+                       ┌───────────┐
+                       │ TaskEngine │
+                       └─────┬─────┘
+                             │
+                             ▼
+                        Task Graph
+                             │
+                             ▼
+                     Constrained Run
+                             │
+                   ┌─────────┴─────────┐
+                   ▼                   ▼
+              Validation            Replan
 ```
 
 ## 开发
@@ -269,7 +274,7 @@ pytest tests/test_project_core.py tests/test_workflow.py tests/test_run_control.
 
 ## 项目状态
 
-- Product Core（JD → 蓝图 → 任务图）：stable，测试覆盖完整
+- Product Core（需求 → 蓝图 → 任务图）：stable，测试覆盖完整
 - CLI / API：stable（Python 3.10–3.12 CI）
 - 约束式执行：**v0.2 起可用**。mock 后端全链路已验证；Hermes 后端在 Linux + bwrap sandbox 内端到端验证（含真实 LLM 调用），见 [docs/demo.md](docs/demo.md)
 - 确定性验证：任务可声明 `test_paths` / `test_command`，验证器真实执行测试；声明的套件通过时任务可达 DONE，否则保持保守 BLOCKED。验收标准还可绑定 `criterion_checks`（TEST/COMMAND/FILE/PATTERN）逐条机器核验，默认 `observe`（只记录裁决），`require` 才会让失败的核验阻断 DONE
@@ -279,6 +284,13 @@ pytest tests/test_project_core.py tests/test_workflow.py tests/test_run_control.
 - cancel：自 v0.2 起真正中断执行（任务间检查点，取消标志跨进程持久）
 - v0.2.0 破坏性变更：`--base-dir` 语义改为运行时根（`projects/`、`runs/`、`workspaces/`）；v0.1.x 自定义布局不自动迁移
 - Web UI / 多用户 / 云执行：未实现
+
+## 相关项目
+
+同作者的 verification-first agent tooling 系列：
+
+- [step-pilot](https://github.com/Zi-Yi-Ming/step-pilot)：为小模型设计的终端 coding agent，完成前必须跑验收命令、交证据
+- [miniprogram-automator-next](https://github.com/Zi-Yi-Ming/miniprogram-auto-test)：修复官方小程序自动化 SDK 两处坏掉能力的适配层
 
 ## License
 
